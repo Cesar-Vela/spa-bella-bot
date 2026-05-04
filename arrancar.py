@@ -18,22 +18,48 @@ claude = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
 user_states = {}
 def consultar_claude(mensaje):
     respuesta = claude.messages.create(
-     model="claude-sonnet-4-5",
-        max_tokens=300,
+        model="claude-sonnet-4-5",
+        max_tokens=220,
         temperature=0.3,
         messages=[
             {
                 "role": "user",
                 "content": f"""
-Eres la asistente virtual del Spa Bella.
-Responde en español, de forma amable, breve y profesional.
-Ayuda con servicios, precios y citas.
+Eres la recepcionista virtual de Spa Bella por WhatsApp.
+
+Tu trabajo es atender de forma humana, amable, breve y profesional.
+
+CONTEXTO:
+Spa Bella ofrece servicios de belleza, bienestar, relajación, masajes, faciales, depilación, tratamientos corporales, promociones y agendamiento de citas.
+
+REGLAS:
+1. Responde siempre en español.
+2. Máximo 4 líneas.
+3. No inventes precios.
+4. No inventes promociones específicas.
+5. Si preguntan algo fuera del negocio, responde con calidez y redirige al spa.
+6. Nunca digas que eres una IA.
+7. Termina con una pregunta útil para llevar la conversación a servicios, precios o citas.
+
+EJEMPLOS:
+
+Cliente: ¿Quién ganó el partido?
+Respuesta: Entiendo 😊, pero estás comunicado con Spa Bella. Estoy aquí para ayudarte con servicios, precios, promociones o citas. ¿Te gustaría conocer nuestros tratamientos?
+
+Cliente: ¿Me cuentas un chiste?
+Respuesta: Jajaja 😊 me encantaría hacerte sonreír, pero por aquí te atiendo desde Spa Bella. ¿Quieres que te recomiende un servicio para relajarte?
+
+Cliente: Estoy muy estresada.
+Respuesta: Claro 😊 para el estrés te puede venir muy bien un masaje relajante. Ayuda a soltar tensión y descansar mejor. ¿Quieres conocer el precio o prefieres agendar?
+
 Mensaje del cliente: {mensaje}
 """
             }
         ]
     )
     return respuesta.content[0].text.strip()
+
+
 def buscar_servicio(mensaje):
     data = supabase.table("servicios").select("*").execute()
     mensaje_lower = mensaje.lower()
@@ -72,14 +98,15 @@ def bot():
 
         respuesta_texto = """¡Hola! Bienvenido/a al Spa Bella 🌸
 
-Soy tu asistente virtual y estoy aquí para ayudarte. Puedo brindarte información sobre:
+Será un gusto atenderte. Soy tu asistente virtual y estoy aquí para ayudarte.
 
-· Nuestros servicios de spa y tratamientos
-· Precios y promociones
-· Agendar citas
-· Horarios de atención
+Puedo brindarte información sobre:
+· Nuestros servicios de spa y tratamientos  
+· Precios y promociones  
+· Agendar citas  
+· Horarios de atención  
 
-¿En qué puedo asistirte hoy?"""
+¿Te gustaría conocer algún tratamiento en particular o deseas que te recomiende algo según lo que necesitas? 😊"""
 
     elif "promocion" in mensaje_lower or "promociones" in mensaje_lower or "promo" in mensaje_lower:
         state["intent"] = "promociones"
