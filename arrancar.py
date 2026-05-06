@@ -17,26 +17,17 @@ user_states = {}
 user_history = {}
 
 SYSTEM_PROMPT = """
-Eres Valentina, la recepcionista virtual de Spa Bella en WhatsApp.
-Responde de forma cálida, breve y útil.
+Eres Valentina, recepcionista virtual de Spa Bella en WhatsApp.
+Tu trabajo es ayudar con servicios, precios, horarios y citas del spa.
+Responde cálido, breve y sin sonar robótica.
 
-REGLA PRINCIPAL:
-- La agenda, precios, servicios y horarios los maneja el sistema con reglas.
-- Tú solo ayudas en dudas generales o mensajes fuera del flujo.
-- No saludes ni te presentes si la conversación ya empezó.
-- No inventes precios, promociones, horarios ni disponibilidad.
-- No menciones recordatorios automáticos porque aún no están activos.
-- Si no estás segura, ofrece pasar a una persona del spa.
-
-SOBRE SPA BELLA:
-- Servicios: masajes, faciales, depilación, uñas, pestañas, cabello y tratamientos corporales.
-- Horarios: lunes a jueves 9am-6pm, viernes 9am-8pm, sábado 9am-4pm, domingos cerrado.
-- Puedes orientar al cliente hacia servicios, precios, horarios o citas.
-
-ESTILO:
-- Máximo 3 líneas.
-- Usa máximo 1 emoji.
-- Termina con una pregunta útil cuando aplique.
+Reglas:
+- Máximo 3 líneas cuando sea posible.
+- No inventes precios, promociones ni servicios.
+- No respondas política, medicina, religión, noticias ni temas personales.
+- Si algo no es del spa, redirige con amabilidad.
+- No digas que eres IA o bot.
+- No repitas la bienvenida si la conversación ya inició.
 """
 
 HORARIOS_DISPONIBLES = {
@@ -53,6 +44,26 @@ DIAS_ES = {
     "thursday": "jueves", "friday": "viernes", "saturday": "sabado", "sunday": "domingo"
 }
 
+CATEGORIA_LABELS = {
+    "masajes": "masajes",
+    "faciales": "faciales",
+    "depilacion": "depilación",
+    "corporales": "tratamientos corporales",
+    "unas": "uñas",
+    "pestanas": "pestañas",
+    "cabello": "cabello",
+}
+
+CATEGORIA_MENU = [
+    {"key": "masajes", "label": "Masajes"},
+    {"key": "faciales", "label": "Faciales"},
+    {"key": "depilacion", "label": "Depilación"},
+    {"key": "corporales", "label": "Tratamientos corporales"},
+    {"key": "unas", "label": "Uñas"},
+    {"key": "pestanas", "label": "Pestañas"},
+    {"key": "cabello", "label": "Cabello"},
+]
+
 PALABRAS_CLAVE = {
     "masaje relajante": ["relajante", "relajacion", "relajarme", "estres", "descansar", "relajar"],
     "masaje descontracturante": ["descontracturante", "contractura", "dolor", "espalda", "nudos", "tension"],
@@ -60,10 +71,10 @@ PALABRAS_CLAVE = {
     "facial hidratante": ["hidratante", "hidratacion", "piel seca", "hidratarme", "hidrata"],
     "facial anti-edad": ["anti edad", "antiedad", "arrugas", "rejuvenecer", "anti-edad"],
     "depilacion de axilas": ["axila", "axilas"],
-    "depilacion de piernas": ["pierna", "piernas", "piernas completas"],
+    "depilacion de piernas": ["pierna", "piernas", "completa", "completas"],
     "depilacion de ingles": ["ingles", "bikini"],
     "tratamiento reductivo": ["reductivo", "reducir", "adelgazar", "medidas", "corporal"],
-    "diseno de pestanas": ["pestanas", "pestañas", "cejas", "lifting"],
+    "diseno de pestanas": ["pestanas", "pestanas", "cejas", "lifting"],
     "manicure clasico": ["manicure", "clasico", "unas", "uñas"],
     "manicure semipermanente": ["semipermanente", "semi permanente"],
     "keratina": ["keratina", "alisado"],
@@ -71,23 +82,47 @@ PALABRAS_CLAVE = {
 }
 
 CATEGORIAS = {
-    "masajes": ["masaje", "masajes", "relajacion", "dolor muscular"],
+    "masajes": ["masaje", "masajes", "relajacion", "dolor muscular", "espalda"],
     "faciales": ["facial", "faciales", "cara", "rostro", "piel"],
     "depilacion": ["depilacion", "depilar", "vello", "cera"],
+    "corporales": ["reductivo", "corporal", "cuerpo", "medidas"],
     "unas": ["manicure", "pedicure", "unas", "uñas"],
     "pestanas": ["pestanas", "pestañas", "cejas"],
-    "cabello": ["keratina", "tinte", "cabello", "pelo"],
-    "corporales": ["reductivo", "corporal", "cuerpo"],
+    "cabello": ["keratina", "tinte", "corte", "cabello", "pelo"],
 }
+
+DESCRIPCIONES_SERVICIOS = {
+    "masaje relajante": "Ideal para soltar tensión, descansar y desconectarte.",
+    "masaje descontracturante": "Recomendado para espalda cargada, nudos o tensión muscular.",
+    "masaje con piedras calientes": "Combina calor y masaje para una relajación más profunda.",
+    "facial hidratante": "Ayuda a refrescar la piel y darle una apariencia más luminosa.",
+    "facial anti-edad": "Pensado para cuidar la piel madura y mejorar su apariencia.",
+    "depilacion de axilas": "Servicio rápido para una zona más limpia y cómoda.",
+    "depilacion de piernas": "Ideal para dejar la piel de las piernas más suave y limpia.",
+    "depilacion piernas completas": "Ideal para dejar la piel de las piernas más suave y limpia.",
+    "depilacion de ingles": "Depilación de zona bikini realizada con cuidado y discreción.",
+    "tratamiento reductivo": "Ayuda a trabajar zonas localizadas y complementar hábitos saludables.",
+    "diseno de pestanas": "Realza la mirada con un acabado más definido.",
+    "manicure clasico": "Limpieza, arreglo y esmaltado tradicional de uñas.",
+    "manicure semipermanente": "Esmaltado de mayor duración para mantener las uñas arregladas por más tiempo.",
+    "keratina": "Tratamiento capilar para ayudar a controlar el frizz y suavizar el cabello.",
+    "tinte + corte": "Cambio de color y ajuste de corte para renovar tu estilo.",
+}
+
+TEMAS_FUERA = [
+    "maduro", "presidente", "politica", "política", "gobierno", "elecciones",
+    "futbol", "fútbol", "noticias", "religion", "religión", "dolar", "dólar",
+    "clima", "pais", "país", "venezuela", "colombia", "trump", "petro"
+]
+
+PALABRAS_HUMANO = ["humano", "asesor", "asesora", "persona", "llamar", "me llaman", "hablar con alguien", "queja"]
 
 
 def normalizar_texto(texto):
-    texto = str(texto or "").lower().strip()
+    texto = (texto or "").lower().strip()
     texto = unicodedata.normalize("NFD", texto)
     texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
-    for ch in ["?", "¿", "!", "¡", ".", ",", ";", ":", "-", "_"]:
-        texto = texto.replace(ch, " ")
-    return " ".join(texto.split())
+    return texto
 
 
 def formatear_precio(valor):
@@ -97,17 +132,16 @@ def formatear_precio(valor):
         return f"${valor}"
 
 
-def es_saludo_puro(mensaje_norm):
-    saludos = ["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "hey"]
-    return mensaje_norm in saludos
+def descripcion_servicio(nombre):
+    return DESCRIPCIONES_SERVICIOS.get(normalizar_texto(nombre), "Es una opción muy solicitada en Spa Bella.")
 
 
-def cargar_servicios():
-    resultado = supabase.table("servicios").select("*").eq("activo", True).execute()
+def obtener_servicios():
+    resultado = supabase.table("servicios").select("*").execute()
     return resultado.data or []
 
 
-def servicio_en_categoria(servicio, categoria):
+def servicio_pertenece_categoria(servicio, categoria):
     n = normalizar_texto(servicio.get("nombre", ""))
     if categoria == "masajes":
         return "masaje" in n
@@ -115,29 +149,42 @@ def servicio_en_categoria(servicio, categoria):
         return "facial" in n
     if categoria == "depilacion":
         return "depilacion" in n
-    if categoria == "unas":
-        return "manicure" in n or "pedicure" in n
-    if categoria == "pestanas":
-        return "pestanas" in n or "pestañas" in n
-    if categoria == "cabello":
-        return "keratina" in n or "tinte" in n or "corte" in n
     if categoria == "corporales":
         return "reductivo" in n or "corporal" in n
+    if categoria == "unas":
+        return "manicure" in n or "pedicure" in n or "una" in n
+    if categoria == "pestanas":
+        return "pestana" in n or "ceja" in n
+    if categoria == "cabello":
+        return "keratina" in n or "tinte" in n or "corte" in n or "cabello" in n
     return False
 
 
+def servicios_por_categoria(categoria):
+    return [s for s in obtener_servicios() if servicio_pertenece_categoria(s, categoria)]
+
+
+def construir_menu_servicios(servicios):
+    lineas = []
+    for i, servicio in enumerate(servicios, start=1):
+        lineas.append(f"{i}. {servicio['nombre']} - {formatear_precio(servicio['precio'])}")
+    return "\n".join(lineas)
+
+
+def construir_menu_categorias():
+    return "\n".join([f"{i}. {item['label']}" for i, item in enumerate(CATEGORIA_MENU, start=1)])
+
+
 def buscar_servicio(mensaje):
-    servicios = cargar_servicios()
+    data = obtener_servicios()
     mensaje_norm = normalizar_texto(mensaje)
 
-    # 1. Nombre completo o parcial del servicio.
-    for servicio in servicios:
+    for servicio in data:
         nombre_norm = normalizar_texto(servicio["nombre"])
         if nombre_norm in mensaje_norm or mensaje_norm in nombre_norm:
             return {"tipo": "servicio", "data": servicio}
 
-    # 2. Palabras clave específicas.
-    for servicio in servicios:
+    for servicio in data:
         nombre_norm = normalizar_texto(servicio["nombre"])
         for nombre_servicio, keywords in PALABRAS_CLAVE.items():
             if normalizar_texto(nombre_servicio) == nombre_norm:
@@ -145,69 +192,123 @@ def buscar_servicio(mensaje):
                     if normalizar_texto(palabra) in mensaje_norm:
                         return {"tipo": "servicio", "data": servicio}
 
-    # 3. Categoría.
     for categoria, keywords in CATEGORIAS.items():
         for palabra in keywords:
             if normalizar_texto(palabra) in mensaje_norm:
-                servicios_cat = [s for s in servicios if servicio_en_categoria(s, categoria)]
-                if servicios_cat:
-                    return {"tipo": "categoria", "categoria": categoria, "data": servicios_cat}
+                lista = servicios_por_categoria(categoria)
+                if lista:
+                    return {"tipo": "categoria", "categoria": categoria, "data": lista}
 
     return None
-
-
-def construir_menu_servicios(servicios):
-    texto = ""
-    for i, servicio in enumerate(servicios, start=1):
-        texto += f"{i}. {servicio['nombre']} - {formatear_precio(servicio['precio'])}\n"
-    return texto.strip()
 
 
 def seleccionar_opcion_servicio(mensaje, opciones):
     mensaje_norm = normalizar_texto(mensaje)
 
-    # Número: 1, 2, 3...
     if mensaje_norm.isdigit():
-        indice = int(mensaje_norm) - 1
-        if 0 <= indice < len(opciones):
-            return opciones[indice]
+        idx = int(mensaje_norm) - 1
+        if 0 <= idx < len(opciones):
+            return opciones[idx]
 
-    # Texto: "piernas", "relajante", "solo axilas", etc.
+    # Casos frecuentes escritos con texto.
+    equivalencias = {
+        "pierna": "pierna", "piernas": "pierna", "completa": "pierna", "completas": "pierna",
+        "axila": "axila", "axilas": "axila",
+        "relajante": "relajante", "descontracturante": "descontracturante",
+        "hidratante": "hidratante", "anti edad": "anti", "antiedad": "anti",
+    }
+
+    for clave, objetivo in equivalencias.items():
+        if clave in mensaje_norm:
+            for servicio in opciones:
+                if objetivo in normalizar_texto(servicio["nombre"]):
+                    return servicio
+
     for servicio in opciones:
         nombre_norm = normalizar_texto(servicio["nombre"])
         if nombre_norm in mensaje_norm or mensaje_norm in nombre_norm:
             return servicio
-
-        palabras = [p for p in nombre_norm.split() if len(p) > 3]
-        coincidencias = [p for p in palabras if p in mensaje_norm]
-        if coincidencias:
+        partes = [p for p in nombre_norm.split() if len(p) > 3]
+        if any(p in mensaje_norm for p in partes):
             return servicio
-
-    # Casos frecuentes.
-    equivalencias = {
-        "pierna": "pierna",
-        "piernas": "pierna",
-        "axila": "axila",
-        "axilas": "axila",
-        "relajante": "relajante",
-        "descontracturante": "descontracturante",
-        "hidratante": "hidratante",
-        "anti edad": "anti",
-        "antiedad": "anti",
-        "keratina": "keratina",
-        "semipermanente": "semipermanente",
-    }
-    for clave, buscar in equivalencias.items():
-        if clave in mensaje_norm:
-            for servicio in opciones:
-                if buscar in normalizar_texto(servicio["nombre"]):
-                    return servicio
 
     return None
 
 
-def consultar_claude(mensaje, historial=None):
-    historial = historial or []
+def seleccionar_categoria(mensaje):
+    mensaje_norm = normalizar_texto(mensaje)
+    if mensaje_norm.isdigit():
+        idx = int(mensaje_norm) - 1
+        if 0 <= idx < len(CATEGORIA_MENU):
+            return CATEGORIA_MENU[idx]["key"]
+    for categoria, keywords in CATEGORIAS.items():
+        if any(normalizar_texto(p) in mensaje_norm for p in keywords):
+            return categoria
+    return None
+
+
+def es_fuera_de_tema(mensaje):
+    msg = normalizar_texto(mensaje)
+    return any(normalizar_texto(p) in msg for p in TEMAS_FUERA)
+
+
+def quiere_servicios(mensaje):
+    msg = normalizar_texto(mensaje)
+    patrones = ["servicio", "servicios", "opciones", "todo", "todas", "que tienen", "que ofrecen", "tratamientos"]
+    return any(p in msg for p in patrones)
+
+
+def quiere_precio(mensaje):
+    msg = normalizar_texto(mensaje)
+    patrones = ["precio", "precios", "valor", "cuanto", "cuesta", "cuestan", "tarifa"]
+    return any(p in msg for p in patrones)
+
+
+def quiere_agendar(mensaje):
+    msg = normalizar_texto(mensaje)
+    patrones = ["cita", "agendar", "reservar", "turno", "quiero agendar", "agenda"]
+    return any(p in msg for p in patrones)
+
+
+def respuesta_menu_principal():
+    return f"""¿Qué quieres revisar? 😊
+
+{construir_menu_categorias()}
+
+Responde con el número o el nombre de la categoría."""
+
+
+def mostrar_categoria(categoria, state):
+    servicios = servicios_por_categoria(categoria)
+    if not servicios:
+        state["step"] = "inicio"
+        return "Por ahora no tengo opciones en esa categoría 😊 ¿Quieres revisar masajes, faciales o depilación?"
+
+    state["step"] = "seleccionando_servicio"
+    state["opciones"] = servicios
+    state["categoria_actual"] = categoria
+    etiqueta = CATEGORIA_LABELS.get(categoria, categoria)
+    return f"""Tenemos estas opciones de {etiqueta} 😊
+
+{construir_menu_servicios(servicios)}
+
+Responde con el número de la opción que te interesa."""
+
+
+def respuesta_servicio_confirmado(servicio, state):
+    state["step"] = "servicio_confirmado"
+    state["intent"] = "servicio"
+    state["servicio"] = servicio
+    nombre = servicio["nombre"]
+    precio = formatear_precio(servicio["precio"])
+    desc = descripcion_servicio(nombre)
+    return f"""{nombre} cuesta {precio} 😊
+{desc}
+
+Responde 1 para agendar o 2 para ver otros servicios."""
+
+
+def consultar_claude(mensaje, historial=[]):
     mensajes = []
     for h in historial[-6:]:
         mensajes.append(h)
@@ -226,16 +327,12 @@ def buscar_o_crear_cliente(nombre, telefono):
     resultado = supabase.table("clientes").select("*").eq("telefono", telefono).execute()
     if resultado.data:
         cliente = resultado.data[0]
-        # Actualiza el nombre si estaba vacío o si quieres conservar el último nombre escrito.
+        # Actualiza nombre si cambió o estaba vacío.
         if nombre and cliente.get("nombre") != nombre:
             supabase.table("clientes").update({"nombre": nombre}).eq("id", cliente["id"]).execute()
             cliente["nombre"] = nombre
         return cliente
-
-    nuevo = supabase.table("clientes").insert({
-        "nombre": nombre,
-        "telefono": telefono,
-    }).execute()
+    nuevo = supabase.table("clientes").insert({"nombre": nombre, "telefono": telefono}).execute()
     return nuevo.data[0] if nuevo.data else None
 
 
@@ -255,11 +352,7 @@ def guardar_cita(cliente_id, servicio_id, fecha_hora):
 
 def horario_ocupado(fecha_hora):
     try:
-        resultado = supabase.table("citas") \
-            .select("id") \
-            .eq("fecha_hora", fecha_hora) \
-            .neq("estado", "cancelada") \
-            .execute()
+        resultado = supabase.table("citas").select("id").eq("fecha_hora", fecha_hora).neq("estado", "cancelada").execute()
         return len(resultado.data) > 0
     except Exception as e:
         print(f"ERROR consultando horario ocupado: {e}")
@@ -271,13 +364,8 @@ def obtener_horarios_disponibles(fecha_str, dia_semana):
         horarios_base = HORARIOS_DISPONIBLES.get(dia_semana, [])
         inicio_dia = f"{fecha_str} 00:00:00"
         fin_dia = f"{fecha_str} 23:59:59"
-        citas = supabase.table("citas") \
-            .select("fecha_hora") \
-            .gte("fecha_hora", inicio_dia) \
-            .lte("fecha_hora", fin_dia) \
-            .neq("estado", "cancelada") \
-            .execute()
-        horas_ocupadas = [str(cita["fecha_hora"])[11:16] for cita in (citas.data or [])]
+        citas = supabase.table("citas").select("fecha_hora").gte("fecha_hora", inicio_dia).lte("fecha_hora", fin_dia).neq("estado", "cancelada").execute()
+        horas_ocupadas = [str(cita["fecha_hora"])[11:16] for cita in citas.data]
         return [h for h in horarios_base if h not in horas_ocupadas]
     except Exception as e:
         print(f"ERROR obteniendo horarios disponibles: {e}")
@@ -291,7 +379,6 @@ def interpretar_fecha(texto):
 
     if "hoy" in texto_norm:
         return hoy.strftime("%Y-%m-%d"), DIAS_ES.get(hoy.strftime("%A").lower(), "")
-
     if "manana" in texto_norm:
         manana = hoy + timedelta(days=1)
         return manana.strftime("%Y-%m-%d"), DIAS_ES.get(manana.strftime("%A").lower(), "")
@@ -312,8 +399,25 @@ def interpretar_fecha(texto):
         return None, None
 
 
-def estado_inicial(saludado=False):
-    return {
+def reset_estado(remitente):
+    user_states[remitente] = {
+        "intent": None,
+        "step": "inicio",
+        "servicio": None,
+        "fecha": None,
+        "fecha_texto": None,
+        "hora": None,
+        "nombre": None,
+        "opciones": [],
+        "categoria_actual": None,
+        "saludado": False,
+    }
+    user_history[remitente] = []
+
+
+def limpiar_flujo(remitente):
+    saludado = user_states.get(remitente, {}).get("saludado", False)
+    user_states[remitente] = {
         "intent": None,
         "step": "inicio",
         "servicio": None,
@@ -327,44 +431,12 @@ def estado_inicial(saludado=False):
     }
 
 
-def reset_estado(remitente):
-    user_states[remitente] = estado_inicial(saludado=False)
-    user_history[remitente] = []
-
-
-def limpiar_flujo(remitente):
-    saludado = user_states.get(remitente, {}).get("saludado", False)
-    user_states[remitente] = estado_inicial(saludado=saludado)
-    user_history[remitente] = []
-
-
-def responder_categoria(state, categoria_nombre, categoria_servicios, modo_agendar=False):
-    state["opciones"] = categoria_servicios
-    state["categoria_actual"] = categoria_nombre
-    state["step"] = "seleccionando_servicio"
-    if modo_agendar:
-        state["intent"] = "agendar"
-    else:
-        state["intent"] = "servicio_mencionado"
-
-    menu = construir_menu_servicios(categoria_servicios)
-    return f"""Tenemos estas opciones de {categoria_nombre} 😊
-
-{menu}
-
-Responde con el número de la opción que te interesa."""
-
-
-def responder_servicio_elegido(state, servicio):
+def iniciar_agenda_con_servicio(state, servicio):
+    state["intent"] = "agendar"
+    state["step"] = "esperando_fecha"
     state["servicio"] = servicio
     state["opciones"] = []
-    state["categoria_actual"] = None
-    state["intent"] = "servicio_mencionado"
-    state["step"] = "servicio_confirmado"
-    precio = formatear_precio(servicio["precio"])
-    return f"""{servicio['nombre']} cuesta {precio} 😊
-
-Responde 1 para agendar o 2 para ver otros servicios."""
+    return f"Perfecto 😊 ¿Para qué día quieres tu {servicio['nombre']}? Puedes decir: mañana, viernes o sábado."
 
 
 @app.route("/bot", methods=["POST"])
@@ -373,85 +445,49 @@ def bot():
     remitente = request.form.get("From", "")
     print(f"\nMENSAJE de {remitente}: {mensaje}")
 
-    mensaje_norm = normalizar_texto(mensaje)
-
     if remitente not in user_states:
         reset_estado(remitente)
     if remitente not in user_history:
         user_history[remitente] = []
 
     state = user_states[remitente]
+    mensaje_norm = normalizar_texto(mensaje)
 
     resultado_servicio = buscar_servicio(mensaje)
     servicio = resultado_servicio["data"] if resultado_servicio and resultado_servicio["tipo"] == "servicio" else None
     categoria_servicios = resultado_servicio["data"] if resultado_servicio and resultado_servicio["tipo"] == "categoria" else None
     categoria_nombre = resultado_servicio["categoria"] if resultado_servicio and resultado_servicio["tipo"] == "categoria" else None
 
-    # CANCELAR / REINICIAR
-    if any(p in mensaje_norm for p in ["cancelar", "reiniciar", "empezar de nuevo", "volver al inicio"]):
-        limpiar_flujo(remitente)
-        respuesta_texto = "Claro 😊 Empecemos de nuevo. ¿Quieres consultar servicios, precios o agendar una cita?"
+    respuesta_texto = None
 
-    # SALUDO PURO: no debe robar mensajes como "hola quiero agendar".
-    elif es_saludo_puro(mensaje_norm):
+    # 1. Cancelación o humano siempre tiene prioridad.
+    if any(p in mensaje_norm for p in ["cancelar", "reiniciar", "empezar de nuevo", "borrar"]):
+        limpiar_flujo(remitente)
+        respuesta_texto = "Claro 😊 Empecemos de nuevo. ¿Quieres revisar servicios, precios u horarios?"
+
+    elif any(p in mensaje_norm for p in PALABRAS_HUMANO):
+        respuesta_texto = "Claro 😊 Te puede contactar una persona del equipo. Déjame tu nombre y número, por favor."
+
+    # 2. Saludo sin destruir contexto útil.
+    elif any(s == mensaje_norm or mensaje_norm.startswith(s + " ") for s in ["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "hey"]):
         if state.get("saludado"):
-            respuesta_texto = "Hola de nuevo 😊 ¿Quieres consultar servicios, precios o agendar una cita?"
+            respuesta_texto = "Hola de nuevo 😊 ¿Quieres consultar servicios, precios, horarios o agendar una cita?"
         else:
             state["saludado"] = True
-            respuesta_texto = """¡Hola! Bienvenida a Spa Bella 🌸
+            respuesta_texto = "¡Hola! Bienvenida a Spa Bella 🌸\nSoy Valentina. Puedo ayudarte con servicios, precios, horarios y citas.\n¿Qué estás buscando hoy?"
 
-Soy Valentina. Puedo ayudarte con servicios, precios, horarios y citas.
-
-¿Qué estás buscando hoy?"""
-
-    # SELECCIÓN DE MENÚ NUMÉRICO O TEXTO.
-    elif state.get("step") == "seleccionando_servicio" and state.get("opciones"):
-        servicio_elegido = seleccionar_opcion_servicio(mensaje, state["opciones"])
-        if servicio_elegido:
-            if state.get("intent") == "agendar":
-                state["servicio"] = servicio_elegido
-                state["opciones"] = []
-                state["categoria_actual"] = None
-                state["step"] = "esperando_fecha"
-                respuesta_texto = f"Perfecto ✨ {servicio_elegido['nombre']} seleccionado. ¿Para qué día lo quieres?"
-            else:
-                respuesta_texto = responder_servicio_elegido(state, servicio_elegido)
-        else:
-            menu = construir_menu_servicios(state["opciones"])
-            respuesta_texto = f"""No logré identificar cuál opción quieres 😊
-
-Elige una opción con el número:
-{menu}"""
-
-    # DESPUÉS DE MOSTRAR PRECIO DE UN SERVICIO.
-    elif state.get("step") == "servicio_confirmado":
-        if mensaje_norm in ["1", "si", "sí", "agendar", "quiero agendar", "cita", "reservar"]:
-            state["intent"] = "agendar"
-            state["step"] = "esperando_fecha"
-            respuesta_texto = f"Perfecto 😊 ¿Para qué día quieres tu {state['servicio']['nombre']}?"
-        elif mensaje_norm in ["2", "otro", "otros", "ver otro", "ver otros", "servicios"]:
-            limpiar_flujo(remitente)
-            user_states[remitente]["saludado"] = True
-            respuesta_texto = "Claro 😊 ¿Qué quieres revisar: masajes, faciales o depilación?"
-        elif any(p in mensaje_norm for p in ["precio", "cuanto", "cuesta", "valor"]):
-            servicio_actual = state.get("servicio")
-            precio = formatear_precio(servicio_actual["precio"])
-            respuesta_texto = f"{servicio_actual['nombre']} cuesta {precio} 😊 ¿Quieres agendarlo? Responde 1 para agendar."
-        else:
-            respuesta_texto = "¿Quieres agendarlo? Responde 1 para agendar o 2 para ver otros servicios 😊"
-
-    # FLUJO DE AGENDAMIENTO ACTIVO.
+    # 3. Flujo activo de agendamiento.
     elif state.get("intent") == "agendar":
-
         if state.get("step") == "esperando_servicio":
             if servicio:
-                state["servicio"] = servicio
-                state["step"] = "esperando_fecha"
-                respuesta_texto = f"Perfecto ✨ {servicio['nombre']} seleccionado. ¿Para qué día lo quieres?"
+                respuesta_texto = iniciar_agenda_con_servicio(state, servicio)
             elif categoria_servicios:
-                respuesta_texto = responder_categoria(state, categoria_nombre, categoria_servicios, modo_agendar=True)
+                respuesta_texto = mostrar_categoria(categoria_nombre, state)
+            elif quiere_servicios(mensaje):
+                state["step"] = "seleccionando_categoria"
+                respuesta_texto = respuesta_menu_principal()
             else:
-                respuesta_texto = "¿Para qué servicio quieres la cita? Puedes escribir masaje, facial o depilación 😊"
+                respuesta_texto = "¿Para qué servicio quieres la cita? Puedes responder masajes, faciales o depilación 😊"
 
         elif state.get("step") == "esperando_fecha":
             fecha_str, dia_semana = interpretar_fecha(mensaje)
@@ -459,17 +495,16 @@ Elige una opción con el número:
                 state["fecha"] = fecha_str
                 state["fecha_texto"] = f"{dia_semana} {fecha_str}"
                 state["step"] = "esperando_hora"
-                horarios_disponibles = obtener_horarios_disponibles(fecha_str, dia_semana)
-                if horarios_disponibles:
-                    horarios = " · ".join(horarios_disponibles)
-                    respuesta_texto = f"Para el {dia_semana} tenemos estos horarios disponibles 😊\n\n{horarios}\n\n¿Cuál te viene mejor?"
+                horarios = obtener_horarios_disponibles(fecha_str, dia_semana)
+                if horarios:
+                    respuesta_texto = f"Para el {dia_semana} tenemos estos horarios disponibles 😊\n\n{' · '.join(horarios)}\n\n¿Cuál te viene mejor?"
                 else:
                     state["step"] = "esperando_fecha"
-                    respuesta_texto = f"Para el {dia_semana} ya no tenemos horarios disponibles 😊 ¿Qué otro día te gustaría?"
+                    respuesta_texto = f"Para el {dia_semana} ya no tenemos horarios disponibles 😊 ¿Qué otro día te sirve?"
             elif dia_semana == "domingo":
-                respuesta_texto = "Los domingos estamos cerrados 😊 ¿Te parece bien otro día? Atendemos de lunes a sábado."
+                respuesta_texto = "Los domingos estamos cerrados 😊 ¿Te parece otro día de lunes a sábado?"
             else:
-                respuesta_texto = "No entendí bien la fecha 😊 Puedes decirme: mañana, viernes o sábado."
+                respuesta_texto = "No entendí bien el día 😊 Puedes decirme: mañana, viernes o sábado."
 
         elif state.get("step") == "esperando_hora":
             hora_limpia = mensaje_norm.replace("am", "").replace("pm", "").replace(" ", "")
@@ -482,14 +517,13 @@ Elige una opción con el número:
 
             dia_semana = state["fecha_texto"].split(" ")[0] if state.get("fecha_texto") else ""
             horarios_dia = obtener_horarios_disponibles(state.get("fecha"), dia_semana)
-
             if hora_limpia in horarios_dia:
                 state["hora"] = hora_limpia
                 state["step"] = "esperando_nombre"
-                respuesta_texto = f"¡Perfecto! {hora_limpia} anotado ✨\n\n¿A nombre de quién quedo la cita?"
+                respuesta_texto = f"¡Perfecto! {hora_limpia} anotado ✨\n\n¿A nombre de quién dejo la cita?"
             else:
                 horarios = " · ".join(horarios_dia) if horarios_dia else "ninguno disponible"
-                respuesta_texto = f"Ese horario no está disponible 😊\n\nDisponibles: {horarios}\n\n¿Cuál prefieres?"
+                respuesta_texto = f"Ese horario no está disponible 😊\nDisponibles: {horarios}\n¿Cuál prefieres?"
 
         elif state.get("step") == "esperando_nombre":
             nombre_cliente = mensaje.strip()
@@ -497,128 +531,112 @@ Elige una opción con el número:
             try:
                 cliente = buscar_o_crear_cliente(nombre_cliente, telefono)
                 fecha_hora_completa = f"{state['fecha']} {state['hora']}:00"
-
                 if horario_ocupado(fecha_hora_completa):
                     dia = state["fecha_texto"].split(" ")[0]
-                    horarios_disponibles = obtener_horarios_disponibles(state["fecha"], dia)
-                    if horarios_disponibles:
-                        horarios = " · ".join(horarios_disponibles)
+                    horarios = obtener_horarios_disponibles(state["fecha"], dia)
+                    if horarios:
                         state["step"] = "esperando_hora"
-                        respuesta_texto = f"Ese horario acaba de ocuparse 😊 Para el {dia} tenemos disponible:\n\n{horarios}\n\n¿Cuál prefieres?"
+                        respuesta_texto = f"Ese horario acaba de ocuparse 😊\nPara el {dia} queda: {' · '.join(horarios)}\n¿Cuál prefieres?"
                     else:
                         state["step"] = "esperando_fecha"
-                        respuesta_texto = f"Ese día ya no tiene horarios disponibles 😊 ¿Qué otro día te gustaría?"
+                        respuesta_texto = "Ese día ya no tiene horarios disponibles 😊 ¿Qué otro día te gustaría?"
                 else:
                     cita = guardar_cita(cliente["id"], state["servicio"]["id"], fecha_hora_completa)
                     if cita:
                         dia = state["fecha_texto"].split(" ")[0]
-                        respuesta_texto = f"""¡Listo {nombre_cliente}! 🎉 Tu cita quedó confirmada:
-
-📋 {state['servicio']['nombre']}
-📅 {dia.capitalize()} a las {state['hora']}
-💆 Te esperamos en Spa Bella
-
-¿Necesitas algo más?"""
+                        respuesta_texto = f"¡Listo {nombre_cliente}! 🎉 Tu cita quedó confirmada:\n\n📋 {state['servicio']['nombre']}\n📅 {dia.capitalize()} a las {state['hora']}\n¿Necesitas algo más?"
                         limpiar_flujo(remitente)
                     else:
                         respuesta_texto = "Hubo un problema al guardar tu cita 😊 ¿Puedes intentarlo de nuevo?"
             except Exception as e:
                 print(f"ERROR en agendamiento: {e}")
-                respuesta_texto = "Tuve un inconveniente 😊 ¿Me repites tu nombre para intentarlo de nuevo?"
+                respuesta_texto = "Tuve un inconveniente guardando la cita 😊 ¿Me repites tu nombre?"
 
+    # 4. Selección de categoría desde menú principal.
+    elif state.get("step") == "seleccionando_categoria":
+        categoria = seleccionar_categoria(mensaje)
+        if categoria:
+            respuesta_texto = mostrar_categoria(categoria, state)
         else:
-            state["step"] = "esperando_servicio"
-            respuesta_texto = "¿Para qué servicio deseas agendar tu cita? 😊"
+            respuesta_texto = f"No identifiqué la categoría 😊\n{construir_menu_categorias()}\nResponde con un número."
 
-    # INICIAR AGENDAMIENTO.
-    elif any(p in mensaje_norm for p in ["cita", "agendar", "reservar", "turno", "quiero agendar"]):
+    # 5. Selección de servicio desde menú numerado.
+    elif state.get("step") == "seleccionando_servicio" and state.get("opciones"):
+        servicio_elegido = seleccionar_opcion_servicio(mensaje, state["opciones"])
+        if servicio_elegido:
+            respuesta_texto = respuesta_servicio_confirmado(servicio_elegido, state)
+        elif quiere_servicios(mensaje):
+            state["step"] = "seleccionando_categoria"
+            respuesta_texto = respuesta_menu_principal()
+        else:
+            respuesta_texto = f"No logré identificar la opción 😊\n{construir_menu_servicios(state['opciones'])}\nResponde con el número."
+
+    # 6. Servicio confirmado: agendar, ver opciones o responder sí/no.
+    elif state.get("step") == "servicio_confirmado":
+        if mensaje_norm in ["1", "si", "sí", "agendar", "quiero agendar", "cita", "reservar"] or quiere_agendar(mensaje):
+            respuesta_texto = iniciar_agenda_con_servicio(state, state["servicio"])
+        elif mensaje_norm in ["2", "otro", "otros", "ver otro", "servicios", "opciones"] or quiere_servicios(mensaje):
+            state["step"] = "seleccionando_categoria"
+            state["servicio"] = None
+            respuesta_texto = respuesta_menu_principal()
+        elif quiere_precio(mensaje):
+            respuesta_texto = respuesta_servicio_confirmado(state["servicio"], state)
+        else:
+            respuesta_texto = "¿Quieres agendarlo? Responde 1 para agendar o 2 para ver otros servicios 😊"
+
+    # 7. Comandos generales.
+    elif quiere_servicios(mensaje):
+        state["step"] = "seleccionando_categoria"
+        respuesta_texto = respuesta_menu_principal()
+
+    elif quiere_precio(mensaje):
+        if servicio:
+            respuesta_texto = respuesta_servicio_confirmado(servicio, state)
+        elif categoria_servicios:
+            respuesta_texto = mostrar_categoria(categoria_nombre, state)
+        else:
+            state["step"] = "seleccionando_categoria"
+            respuesta_texto = f"Claro 😊 ¿Sobre qué categoría quieres precios?\n\n{construir_menu_categorias()}"
+
+    elif quiere_agendar(mensaje):
         state["intent"] = "agendar"
         if servicio:
-            state["servicio"] = servicio
-            state["step"] = "esperando_fecha"
-            respuesta_texto = f"Con gusto ✨ {servicio['nombre']} seleccionado. ¿Para qué día lo quieres?"
+            respuesta_texto = iniciar_agenda_con_servicio(state, servicio)
         elif categoria_servicios:
-            respuesta_texto = responder_categoria(state, categoria_nombre, categoria_servicios, modo_agendar=True)
+            respuesta_texto = mostrar_categoria(categoria_nombre, state)
         else:
             state["step"] = "esperando_servicio"
             respuesta_texto = "Con gusto te agendo 😊 ¿Para qué servicio quieres la cita?"
 
-    # PRECIOS.
-    elif any(p in mensaje_norm for p in ["precio", "precios", "valor", "cuanto", "cuesta", "cuestan", "tarifa"]):
-        state["intent"] = "precio"
-        if servicio:
-            state["servicio"] = servicio
-            state["step"] = "servicio_confirmado"
-            precio = formatear_precio(servicio["precio"])
-            respuesta_texto = f"{servicio['nombre']} cuesta {precio} 😊\n\nResponde 1 para agendar o 2 para ver otros servicios."
-        elif categoria_servicios:
-            respuesta_texto = responder_categoria(state, categoria_nombre, categoria_servicios, modo_agendar=False)
-        elif state.get("servicio"):
-            servicio_actual = state["servicio"]
-            precio = formatear_precio(servicio_actual["precio"])
-            state["step"] = "servicio_confirmado"
-            respuesta_texto = f"{servicio_actual['nombre']} cuesta {precio} 😊\n\nResponde 1 para agendar o 2 para ver otros servicios."
-        else:
-            state["step"] = "esperando_servicio_precio"
-            respuesta_texto = "Claro 😊 ¿De qué servicio quieres saber el precio? Puedes escribir masaje, facial o depilación."
-
-    # SI ESTABA ESPERANDO SERVICIO PARA PRECIO.
-    elif state.get("step") == "esperando_servicio_precio":
-        if servicio:
-            respuesta_texto = responder_servicio_elegido(state, servicio)
-        elif categoria_servicios:
-            respuesta_texto = responder_categoria(state, categoria_nombre, categoria_servicios, modo_agendar=False)
-        else:
-            respuesta_texto = "No identifiqué el servicio 😊 Puedes escribir, por ejemplo: masaje relajante, facial hidratante o depilación piernas."
-
-    # SERVICIOS GENERALES.
-    elif any(p in mensaje_norm for p in ["servicio", "servicios", "tratamiento", "tratamientos", "que tienen", "que ofrecen"]):
-        servicios = cargar_servicios()
-        menu = construir_menu_servicios(servicios)
-        state["opciones"] = servicios
-        state["step"] = "seleccionando_servicio"
-        state["intent"] = "servicio_mencionado"
-        respuesta_texto = f"""Estos son nuestros servicios en Spa Bella 😊
-
-{menu}
-
-Responde con el número del servicio que te interesa."""
-
-    # SERVICIO O CATEGORÍA MENCIONADA SIN CONTEXTO.
     elif resultado_servicio:
         if servicio:
-            respuesta_texto = responder_servicio_elegido(state, servicio)
-        elif categoria_servicios:
-            respuesta_texto = responder_categoria(state, categoria_nombre, categoria_servicios, modo_agendar=False)
+            respuesta_texto = respuesta_servicio_confirmado(servicio, state)
+        else:
+            respuesta_texto = mostrar_categoria(categoria_nombre, state)
 
-    # HORARIOS.
     elif any(p in mensaje_norm for p in ["horario", "horarios", "atienden", "abierto", "abren", "cierran", "dias"]):
-        respuesta_texto = """Nuestro horario es:
+        respuesta_texto = "Nuestro horario es:\nLun-jue 9am-6pm, viernes 9am-8pm, sábado 9am-4pm. Domingo cerrado.\n¿Te gustaría agendar una cita?"
 
-- Lunes a jueves: 9am - 6pm
-- Viernes: 9am - 8pm
-- Sábado: 9am - 4pm
-- Domingo: cerrado
-
-¿Te gustaría agendar una cita? 😊"""
-
-    # PROMOCIONES.
     elif any(p in mensaje_norm for p in ["promo", "promocion", "promociones", "descuento", "oferta"]):
-        respuesta_texto = "Tenemos promociones en servicios seleccionados 😊 ¿Te interesa facial, masaje, depilación o tratamiento corporal?"
+        respuesta_texto = "Tenemos promociones en servicios seleccionados 😊\n¿Te interesa facial, masaje o depilación?"
 
-    # DESPEDIDAS.
     elif any(p in mensaje_norm for p in ["adios", "chao", "hasta luego", "gracias", "muchas gracias"]):
         limpiar_flujo(remitente)
-        respuesta_texto = "¡Con mucho gusto! 😊 Si necesitas algo de Spa Bella, aquí estaré."
+        respuesta_texto = "¡Con mucho gusto! 😊 Aquí estaré si necesitas algo más de Spa Bella."
 
-    # FALLBACK IA SOLO PARA DUDAS GENERALES.
+    # 8. Fuera de tema controlado.
+    elif es_fuera_de_tema(mensaje):
+        respuesta_texto = "Ese tema no está relacionado con Spa Bella 😊\nPuedo ayudarte con servicios, precios, horarios o citas.\n¿Quieres revisar masajes, faciales o depilación?"
+
+    # 9. IA solo para dudas generales, con fallback seguro.
     else:
         try:
             respuesta_texto = consultar_claude(mensaje, historial=user_history[remitente])
+            if not respuesta_texto or "soy valentina" in normalizar_texto(respuesta_texto):
+                respuesta_texto = "Puedo ayudarte con servicios, precios, horarios o citas 😊 ¿Qué quieres revisar?"
             user_history[remitente].append({"role": "user", "content": mensaje})
             user_history[remitente].append({"role": "assistant", "content": respuesta_texto})
-            if len(user_history[remitente]) > 20:
-                user_history[remitente] = user_history[remitente][-20:]
+            user_history[remitente] = user_history[remitente][-20:]
             print(f"VALENTINA: {respuesta_texto}")
         except Exception as e:
             print(f"ERROR CLAUDE: {e}")
