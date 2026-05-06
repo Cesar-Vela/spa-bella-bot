@@ -51,12 +51,12 @@ NUNCA:
 """
 
 HORARIOS_DISPONIBLES = {
-    "lunes": ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00"],
-    "martes": ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00"],
-    "miercoles": ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00"],
-    "jueves": ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00"],
-    "viernes": ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00"],
-    "sabado": ["09:00", "10:00", "11:00", "12:00", "13:00"],
+    "lunes":     ["09:00","10:00","11:00","14:00","15:00","16:00","17:00"],
+    "martes":    ["09:00","10:00","11:00","14:00","15:00","16:00","17:00"],
+    "miercoles": ["09:00","10:00","11:00","14:00","15:00","16:00","17:00"],
+    "jueves":    ["09:00","10:00","11:00","14:00","15:00","16:00","17:00"],
+    "viernes":   ["09:00","10:00","11:00","14:00","15:00","16:00","17:00","18:00","19:00"],
+    "sabado":    ["09:00","10:00","11:00","12:00","13:00"],
 }
 
 DIAS_ES = {
@@ -109,17 +109,49 @@ def guardar_cita(cliente_id, servicio_id, fecha_hora):
         print(f"ERROR guardando cita: {e}")
         return None
 
+def horario_ocupado(fecha_hora):
+    try:
+        resultado = supabase.table("citas") \
+            .select("id") \
+            .eq("fecha_hora", fecha_hora) \
+            .neq("estado", "cancelada") \
+            .execute()
+        return len(resultado.data) > 0
+    except Exception as e:
+        print(f"ERROR consultando horario ocupado: {e}")
+        return True
+
+def obtener_horarios_disponibles(fecha_str, dia_semana):
+    try:
+        horarios_base = HORARIOS_DISPONIBLES.get(dia_semana, [])
+        inicio_dia = f"{fecha_str} 00:00:00"
+        fin_dia = f"{fecha_str} 23:59:59"
+        citas = supabase.table("citas") \
+            .select("fecha_hora") \
+            .gte("fecha_hora", inicio_dia) \
+            .lte("fecha_hora", fin_dia) \
+            .neq("estado", "cancelada") \
+            .execute()
+        horas_ocupadas = []
+        for cita in citas.data:
+            fecha_hora = str(cita["fecha_hora"])
+            hora = fecha_hora[11:16]
+            horas_ocupadas.append(hora)
+        disponibles = [h for h in horarios_base if h not in horas_ocupadas]
+        return disponibles
+    except Exception as e:
+        print(f"ERROR obteniendo horarios disponibles: {e}")
+        return []
+
 def interpretar_fecha(texto):
     texto = texto.lower().strip()
     hoy = datetime.now()
     dias_semana = ["lunes","martes","miercoles","jueves","viernes","sabado","domingo"]
-
     if "hoy" in texto:
-        return hoy.strftime("%Y-%m-%d"), hoy.strftime("%A").lower()
+        return hoy.strftime("%Y-%m-%d"), DIAS_ES.get(hoy.strftime("%A").lower(), "")
     if "mañana" in texto or "manana" in texto:
         manana = hoy + timedelta(days=1)
         return manana.strftime("%Y-%m-%d"), DIAS_ES.get(manana.strftime("%A").lower(), "")
-
     for dia in dias_semana:
         if dia in texto:
             dias_hasta = (dias_semana.index(dia) - hoy.weekday()) % 7
@@ -127,7 +159,6 @@ def interpretar_fecha(texto):
                 dias_hasta = 7
             fecha = hoy + timedelta(days=dias_hasta)
             return fecha.strftime("%Y-%m-%d"), dia
-
     try:
         fecha = datetime.strptime(texto, "%Y-%m-%d")
         dia = DIAS_ES.get(fecha.strftime("%A").lower(), "")
@@ -189,8 +220,13 @@ Soy Valentina, tu asistente virtual. Puedo ayudarte con servicios, precios, prom
                 state["fecha"] = fecha_str
                 state["fecha_texto"] = f"{dia_semana} {fecha_str}"
                 state["step"] = "esperando_hora"
-                horarios = " · ".join(HORARIOS_DISPONIBLES[dia_semana])
-                respuesta_texto = f"Para el {dia_semana} tenemos estos horarios disponibles 😊\n\n{horarios}\n\n¿Cuál te viene mejor?"
+                horarios_disponibles = obtener_horarios_disponibles(fecha_str, dia_semana)
+                if horarios_disponibles:
+                    horarios = " · ".join(horarios_disponibles)
+                    respuesta_texto = f"Para el {dia_semana} tenemos estos horarios disponibles 😊\n\n{horarios}\n\n¿Cuál te viene mejor?"
+                else:
+                    state["step"] = "esperando_fecha"
+                    respuesta_texto = f"Para el {dia_semana} ya no tenemos horarios disponibles 😊 ¿Te parece si revisamos otro día?"
             elif dia_semana == "domingo":
                 respuesta_texto = "Los domingos estamos cerrados 😊 ¿Te parece bien otro día? Atendemos de lunes a sábado."
             else:
@@ -205,45 +241,51 @@ Soy Valentina, tu asistente virtual. Puedo ayudarte con servicios, precios, prom
                     hora_limpia = f"{h:02d}:00"
                 except:
                     pass
-
             dia_semana = state["fecha_texto"].split(" ")[0] if state["fecha_texto"] else ""
-            horarios_dia = HORARIOS_DISPONIBLES.get(dia_semana, [])
-
+            horarios_dia = obtener_horarios_disponibles(state["fecha"], dia_semana)
             if hora_limpia in horarios_dia:
                 state["hora"] = hora_limpia
                 state["step"] = "esperando_nombre"
                 respuesta_texto = f"¡Perfecto! {hora_limpia} anotado ✨\n\n¿A nombre de quién quedo la cita?"
             else:
-                horarios = " · ".join(horarios_dia)
-                respuesta_texto = f"Ese horario no está disponible 😊 Los horarios para ese día son:\n\n{horarios}\n\n¿Cuál prefieres?"
+                horarios = " · ".join(horarios_dia) if horarios_dia else "ninguno disponible"
+                respuesta_texto = f"Ese horario no está disponible 😊 Los horarios disponibles para ese día son:\n\n{horarios}\n\n¿Cuál prefieres?"
 
         # PASO 4 — esperando nombre y guardando
         elif state["step"] == "esperando_nombre":
             nombre_cliente = mensaje.strip()
             telefono = remitente.replace("whatsapp:", "")
-
             try:
                 cliente = buscar_o_crear_cliente(nombre_cliente, telefono)
                 fecha_hora_completa = f"{state['fecha']} {state['hora']}:00"
-
-                cita = guardar_cita(
-                    cliente_id=cliente["id"],
-                    servicio_id=state["servicio"]["id"],
-                    fecha_hora=fecha_hora_completa
-                )
-
-                if cita:
+                if horario_ocupado(fecha_hora_completa):
                     dia = state["fecha_texto"].split(" ")[0]
-                    respuesta_texto = f"""¡Listo {nombre_cliente}! 🎉 Tu cita quedó confirmada:
+                    horarios_disponibles = obtener_horarios_disponibles(state["fecha"], dia)
+                    if horarios_disponibles:
+                        horarios = " · ".join(horarios_disponibles)
+                        state["step"] = "esperando_hora"
+                        respuesta_texto = f"Ese horario acaba de ocuparse 😊 Para el {dia} tenemos disponible:\n\n{horarios}\n\n¿Cuál prefieres?"
+                    else:
+                        state["step"] = "esperando_fecha"
+                        respuesta_texto = f"Ese día ya no tiene horarios disponibles 😊 ¿Qué otro día te gustaría?"
+                else:
+                    cita = guardar_cita(
+                        cliente_id=cliente["id"],
+                        servicio_id=state["servicio"]["id"],
+                        fecha_hora=fecha_hora_completa
+                    )
+                    if cita:
+                        dia = state["fecha_texto"].split(" ")[0]
+                        respuesta_texto = f"""¡Listo {nombre_cliente}! 🎉 Tu cita quedó confirmada:
 
 📋 {state['servicio']['nombre']}
 📅 {dia.capitalize()} a las {state['hora']}
 💆 Te esperamos en Spa Bella
 
 ¿Necesitas algo más?"""
-                    reset_estado(remitente)
-                else:
-                    respuesta_texto = "Hubo un problema al guardar tu cita 😊 ¿Puedes intentarlo de nuevo?"
+                        reset_estado(remitente)
+                    else:
+                        respuesta_texto = "Hubo un problema al guardar tu cita 😊 ¿Puedes intentarlo de nuevo?"
             except Exception as e:
                 print(f"ERROR en agendamiento: {e}")
                 respuesta_texto = "Tuve un inconveniente 😊 ¿Me repites tu nombre para intentarlo de nuevo?"
