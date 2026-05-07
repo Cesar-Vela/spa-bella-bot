@@ -105,24 +105,47 @@ REGLAS:
 - Dirección: Av. Principal 456, Col. Centro, frente al parque 📍
 - Horario: Lun-Jue 9am-6pm, Vie 9am-8pm, Sáb 9am-4pm. Domingo cerrado.
 
-MENÚS NUMERADOS — MUY IMPORTANTE:
-Cuando muestres una lista de servicios con precios, SIEMPRE usa este formato exacto:
-1. Nombre del servicio — $precio
+BIENVENIDA — PRIMER MENSAJE:
+Cuando el cliente saluda por primera vez, preséntate y muestra SIEMPRE el menú de categorías:
+
+"¡Hola! 🌸 Bienvenida a Spa Bella, soy Valentina.
+Estoy aquí para consentirte. ¿Qué te gustaría explorar hoy?
+
+1️⃣ Masajes — relajante, descontracturante
+2️⃣ Faciales — hidratación, anti-edad, limpieza
+3️⃣ Depilación — piernas, axilas
+4️⃣ Uñas — manicure clásico y semipermanente
+5️⃣ Pestañas — diseño y lifting
+6️⃣ Cabello — keratina, tinte y corte
+7️⃣ Tratamientos corporales — reductivos
+
+Responde con el número o cuéntame qué buscas 😊"
+
+MENÚS NUMERADOS DE SERVICIOS — MUY IMPORTANTE:
+Cuando muestres servicios con precios, SIEMPRE usa este formato exacto:
+1. *Nombre del servicio* — $precio
    _frase alusiva_
-2. Nombre del servicio — $precio
+2. *Nombre del servicio* — $precio
    _frase alusiva_
 ...
 Responde con el número que más te guste 😊
 
 Las frases alusivas las recibirás junto con los datos de cada servicio.
-Esto es OBLIGATORIO cuando listas servicios — hace que Valentina suene humana, no como un bot.
+Esto es OBLIGATORIO — hace que Valentina suene humana, no como un bot.
 
 SELECCIÓN POR NÚMERO:
-Si el cliente responde con un número (1, 2, 3...) después de ver un menú,
-SIEMPRE usa la herramienta get_servicios para recuperar la lista y confirmar qué servicio eligió.
-Nunca asumas el servicio por el número sin consultar la lista actual.
+Si el cliente responde con un número (1, 2, 3...) después de ver un menú de SERVICIOS,
+usa la herramienta get_servicios con la categoría que estabas mostrando para confirmar cuál eligió.
+Si el número corresponde al menú de CATEGORÍAS (1-7), muestra los servicios de esa categoría.
+
+POST-CITA CONFIRMADA:
+Cuando una cita queda confirmada, SIEMPRE ofrece agendar otro servicio así:
+"¿Te gustaría aprovechar y agendar otro servicio para ese mismo día o en otra fecha? 
+Tenemos faciales, depilación, uñas y más 😊"
+Si el cliente dice que sí, inicia el flujo de agendamiento desde cero para el nuevo servicio.
 
 OBJETIVO: Entender qué busca el cliente, recomendarle lo mejor, y llevarlo a agendar.
+Nunca dejes la conversación sin una invitación a continuar.
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -411,28 +434,56 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
 
 
 # ═══════════════════════════════════════════════════════════════
+# LIMPIEZA DE HISTORIAL — elimina tool_results huérfanos
+# Esto evita el error: "unexpected tool_use_id found in tool_result blocks"
+# ═══════════════════════════════════════════════════════════════
+def limpiar_historial(historial):
+    """
+    Filtra el historial para que nunca haya tool_results sin su tool_use correspondiente.
+    Solo conserva turnos de texto puro (user string / assistant string).
+    """
+    limpio = []
+    for msg in historial:
+        content = msg.get("content", "")
+        # Solo guardamos mensajes de texto plano — descartamos bloques de tools
+        if isinstance(content, str):
+            limpio.append(msg)
+        elif isinstance(content, list):
+            # Si todos los bloques son de texto, lo guardamos resumido
+            textos = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+            if textos:
+                limpio.append({"role": msg["role"], "content": " ".join(textos)})
+            # Si son tool_use o tool_result los descartamos — evitan el error
+    return limpio
+
+
+# ═══════════════════════════════════════════════════════════════
 # CICLO AGENTICO — Claude + tools hasta respuesta final
 # ═══════════════════════════════════════════════════════════════
 def responder(mensaje_usuario, historial, telefono):
     """
-    Ciclo agéntico:
-    1. Claude recibe el mensaje + historial.
-    2. Si necesita datos, llama una tool.
-    3. Ejecutamos la tool y devolvemos el resultado.
-    4. Claude formula la respuesta final con personalidad de Valentina.
+    Ciclo agéntico limpio:
+    1. Limpia el historial de tool blocks huérfanos
+    2. Claude recibe el mensaje + historial
+    3. Si necesita datos, llama una tool
+    4. Ejecutamos la tool y devolvemos el resultado
+    5. Claude formula la respuesta final con personalidad de Valentina
     """
-    mensajes = list(historial[-14:])  # últimos 7 turnos (14 entradas)
+    # Limpiamos el historial antes de enviarlo — evita el bug de tool_use_id
+    historial_limpio = limpiar_historial(historial)
+    mensajes = list(historial_limpio[-12:])  # últimos 6 turnos de texto
     mensajes.append({"role": "user", "content": mensaje_usuario})
 
-    MAX_ITERACIONES = 6  # evita loops infinitos
+    MAX_ITERACIONES = 5
     iteracion = 0
+    texto_final = ""
 
     while iteracion < MAX_ITERACIONES:
         iteracion += 1
 
         respuesta = claude.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=600,
+            max_tokens=700,
             system=SYSTEM_PROMPT,
             tools=TOOLS,
             messages=mensajes,
@@ -442,23 +493,34 @@ def responder(mensaje_usuario, historial, telefono):
 
         # ── Respuesta final de texto ───────────────────────────
         if respuesta.stop_reason == "end_turn":
-            texto = ""
             for bloque in respuesta.content:
                 if hasattr(bloque, "text"):
-                    texto += bloque.text
-            return texto.strip(), mensajes
+                    texto_final += bloque.text
+            break
 
         # ── Claude quiere usar una tool ────────────────────────
         if respuesta.stop_reason == "tool_use":
-            # Agregamos el mensaje de Claude con las tool_calls al historial
-            mensajes.append({"role": "assistant", "content": respuesta.content})
+            # Convertimos el contenido a formato serializable para el historial interno
+            content_serializable = []
+            for bloque in respuesta.content:
+                if bloque.type == "text":
+                    content_serializable.append({"type": "text", "text": bloque.text})
+                elif bloque.type == "tool_use":
+                    content_serializable.append({
+                        "type":  "tool_use",
+                        "id":    bloque.id,
+                        "name":  bloque.name,
+                        "input": bloque.input,
+                    })
 
-            # Procesamos cada tool_use del bloque
+            mensajes.append({"role": "assistant", "content": content_serializable})
+
+            # Ejecutamos cada tool y recogemos resultados
             tool_results = []
             for bloque in respuesta.content:
                 if bloque.type == "tool_use":
                     resultado = ejecutar_tool(bloque.name, bloque.input, telefono)
-                    print(f"  → RESULTADO: {json.dumps(resultado, ensure_ascii=False)[:200]}")
+                    print(f"  → {bloque.name}: {json.dumps(resultado, ensure_ascii=False)[:150]}")
                     tool_results.append({
                         "type":        "tool_result",
                         "tool_use_id": bloque.id,
@@ -466,13 +528,16 @@ def responder(mensaje_usuario, historial, telefono):
                     })
 
             mensajes.append({"role": "user", "content": tool_results})
-            continue  # Claude procesa el resultado y decide si necesita más tools o responde
+            continue
 
-        # Stop reason inesperado — salir del loop
-        break
+        break  # stop reason inesperado
 
-    # Fallback si el loop termina sin respuesta
-    return "Perdona, tuve un problema procesando tu mensaje 😊 ¿Puedes repetirlo?", mensajes
+    texto_final = texto_final.strip()
+    if not texto_final:
+        texto_final = "Perdona, tuve un problema 😊 ¿Puedes repetirme tu consulta?"
+
+    # Para el historial persistente solo guardamos texto plano
+    return texto_final, mensaje_usuario
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -492,17 +557,17 @@ def bot():
     historial = user_history[remitente]
 
     try:
-        respuesta_texto, mensajes_actualizados = responder(mensaje, historial, telefono)
+        respuesta_texto, msg_usuario = responder(mensaje, historial, telefono)
     except Exception as e:
         print(f"❌ ERROR: {e}")
         respuesta_texto = "Tuve un inconveniente 😊 ¿Puedes repetirme tu consulta?"
-        mensajes_actualizados = historial
+        msg_usuario = mensaje
 
-    # Actualizar historial — guardamos solo los nuevos mensajes añadidos
-    # Los mensajes_actualizados ya incluyen el historial previo + el turno nuevo
-    # Extraemos solo el turno nuevo (los últimos N que no estaban antes)
-    nuevos = mensajes_actualizados[len(historial):]
-    user_history[remitente] = (historial + nuevos)[-30:]  # máximo 30 entradas
+    # Guardamos solo texto plano en el historial — nunca tool blocks
+    user_history[remitente] = (historial + [
+        {"role": "user",      "content": msg_usuario},
+        {"role": "assistant", "content": respuesta_texto},
+    ])[-24:]  # máximo 12 turnos
 
     print(f"📤 VALENTINA: {respuesta_texto}")
 
