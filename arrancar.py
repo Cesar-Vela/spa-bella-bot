@@ -14,10 +14,275 @@ load_dotenv()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 claude = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
 
+OWNER_PHONE = os.getenv("OWNER_PHONE", "")
+
 # ═══════════════════════════════════════════════════════════════
 # HISTORIAL — única memoria que necesitamos
 # ═══════════════════════════════════════════════════════════════
 user_history = {}
+
+# Estado simple para saber si el dueño activó el panel privado con "soy dueño".
+owner_sessions = {}
+
+
+# ═══════════════════════════════════════════════════════════════
+# MODO DUEÑO — comandos de gestión del spa
+# ═══════════════════════════════════════════════════════════════
+def limpiar_telefono(numero):
+    """Normaliza teléfonos para comparar OWNER_PHONE con el remitente de WhatsApp."""
+    return (numero or "").replace("whatsapp:", "").replace("+", "").strip()
+
+
+def es_dueno(telefono):
+    """Solo devuelve True si el mensaje viene del número configurado como dueño."""
+    return bool(OWNER_PHONE) and limpiar_telefono(telefono) == limpiar_telefono(OWNER_PHONE)
+
+
+def menu_dueno():
+    """Menú privado que se muestra cuando el dueño escribe: soy dueño."""
+    return """👑 *Modo Dueño activado*
+
+Puedes consultar respondiendo con el número o escribiendo el comando:
+
+1️⃣ 📅 *Agenda de hoy* — citas del día
+2️⃣ 📅 *Agenda de mañana* — citas de mañana
+3️⃣ 📅 *Agenda del viernes* — citas de un día específico
+4️⃣ 📊 *Semana* — próximas citas de 7 días
+5️⃣ 💰 *Ingresos de hoy* — ventas confirmadas del día
+6️⃣ 💰 *Ingresos semana* — ventas confirmadas de 7 días
+7️⃣ 📌 *Resumen* — agenda + ingresos de hoy
+
+Ejemplo: responde *1* para ver la agenda de hoy.
+Escribe *salir* para volver al modo cliente 😊"""
+
+
+def es_entrada_modo_dueno(mensaje):
+    """Palabra/frase exacta para abrir el panel del dueño sin afectar el modo cliente."""
+    msg = normalizar(mensaje)
+    return any(p in msg for p in ["soy dueno", "modo dueno", "panel dueno", "panel dueño"])
+
+
+def es_salida_modo_dueno(mensaje):
+    """Permite volver al flujo comercial de Valentina con el mismo celular."""
+    msg = normalizar(mensaje)
+    return any(p in msg for p in ["salir", "salir modo dueno", "modo cliente", "cliente", "valentina"])
+
+
+def es_comando_dueno(mensaje):
+    """Detecta consultas internas del dueño. No se usa para clientes comunes."""
+    msg = normalizar(mensaje)
+    palabras_clave = [
+        "agenda", "citas", "semana", "ingresos", "ventas",
+        "reporte", "resumen", "comandos", "ayuda", "menu"
+    ]
+    return any(palabra in msg for palabra in palabras_clave)
+
+
+def agenda_del_dia(fecha_str=None):
+    """Devuelve las citas del día como texto formateado."""
+    try:
+        if not fecha_str:
+            fecha_str = datetime.now().strftime("%Y-%m-%d")
+
+        inicio = f"{fecha_str} 00:00:00"
+        fin    = f"{fecha_str} 23:59:59"
+
+        citas = supabase.table("citas") \
+            .select("fecha_hora, estado, clientes(nombre), servicios(nombre)") \
+            .gte("fecha_hora", inicio) \
+            .lte("fecha_hora", fin) \
+            .neq("estado", "cancelada") \
+            .order("fecha_hora") \
+            .execute()
+
+        if not citas.data:
+            return f"📅 No hay citas agendadas para el {fecha_str}."
+
+        # Formato de fecha legible
+        fecha_dt = datetime.strptime(fecha_str, "%Y-%m-%d")
+        dias = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
+        meses = ["enero","febrero","marzo","abril","mayo","junio",
+                 "julio","agosto","septiembre","octubre","noviembre","diciembre"]
+        dia_nombre = dias[fecha_dt.weekday()]
+        fecha_legible = f"{dia_nombre} {fecha_dt.day} de {meses[fecha_dt.month-1]}"
+
+        lineas = [f"📅 *Agenda — {fecha_legible}*\n"]
+        for c in citas.data:
+            hora  = str(c["fecha_hora"])[11:16]
+            nombre_cliente  = c.get("clientes", {}).get("nombre", "Sin nombre")
+            nombre_servicio = c.get("servicios", {}).get("nombre", "Sin servicio")
+            estado = "✅" if c["estado"] == "confirmada" else "⏳"
+            lineas.append(f"{estado} {hora} — {nombre_cliente} — {nombre_servicio}")
+
+        lineas.append(f"\nTotal: {len(citas.data)} cita(s)")
+        return "\n".join(lineas)
+
+    except Exception as e:
+        print(f"ERROR agenda: {e}")
+        return "No pude consultar la agenda en este momento 😊"
+
+
+def resumen_semana():
+    """Citas de los próximos 7 días."""
+    try:
+        hoy = datetime.now()
+        inicio = hoy.strftime("%Y-%m-%d") + " 00:00:00"
+        fin    = (hoy + timedelta(days=7)).strftime("%Y-%m-%d") + " 23:59:59"
+
+        citas = supabase.table("citas") \
+            .select("fecha_hora, clientes(nombre), servicios(nombre)") \
+            .gte("fecha_hora", inicio) \
+            .lte("fecha_hora", fin) \
+            .neq("estado", "cancelada") \
+            .order("fecha_hora") \
+            .execute()
+
+        if not citas.data:
+            return "📊 No hay citas en los próximos 7 días."
+
+        lineas = [f"📊 *Próximas citas (7 días)* — {len(citas.data)} en total\n"]
+        for c in citas.data:
+            fecha = str(c["fecha_hora"])[:10]
+            hora  = str(c["fecha_hora"])[11:16]
+            nombre  = c.get("clientes", {}).get("nombre", "Sin nombre")
+            servicio = c.get("servicios", {}).get("nombre", "Sin servicio")
+            lineas.append(f"📌 {fecha} {hora} — {nombre} — {servicio}")
+
+        return "\n".join(lineas)
+
+    except Exception as e:
+        print(f"ERROR semana: {e}")
+        return "No pude consultar la agenda semanal 😊"
+
+
+def ingresos_periodo(dias=0):
+    """Calcula ingresos estimados según citas confirmadas.
+    dias=0 consulta solo hoy. dias=7 consulta desde hoy hasta 7 días.
+    """
+    try:
+        hoy = datetime.now()
+        fecha_inicio = hoy.strftime("%Y-%m-%d")
+        fecha_fin = (hoy + timedelta(days=dias)).strftime("%Y-%m-%d")
+
+        inicio = f"{fecha_inicio} 00:00:00"
+        fin    = f"{fecha_fin} 23:59:59"
+
+        citas = supabase.table("citas") \
+            .select("fecha_hora, estado, servicios(nombre, precio)") \
+            .gte("fecha_hora", inicio) \
+            .lte("fecha_hora", fin) \
+            .eq("estado", "confirmada") \
+            .order("fecha_hora") \
+            .execute()
+
+        if not citas.data:
+            periodo = "hoy" if dias == 0 else "los próximos 7 días"
+            return f"💰 No hay ingresos confirmados para {periodo}."
+
+        total = 0
+        lineas = []
+        for c in citas.data:
+            servicio = c.get("servicios") or {}
+            nombre_servicio = servicio.get("nombre", "Servicio")
+            precio = servicio.get("precio", 0) or 0
+            try:
+                total += float(precio)
+            except Exception:
+                pass
+
+            fecha = str(c["fecha_hora"])[:10]
+            hora  = str(c["fecha_hora"])[11:16]
+            lineas.append(f"• {fecha} {hora} — {nombre_servicio} — {formatear_precio(precio)}")
+
+        titulo = "💰 *Ingresos de hoy*" if dias == 0 else "💰 *Ingresos próximos 7 días*"
+        return "\n".join([
+            titulo,
+            f"Total estimado: *{formatear_precio(total)}*",
+            f"Citas confirmadas: {len(citas.data)}",
+            "",
+            *lineas
+        ])
+
+    except Exception as e:
+        print(f"ERROR ingresos: {e}")
+        return "No pude consultar los ingresos en este momento 😊"
+
+
+def resumen_dueno():
+    """Resumen rápido para demostración: citas e ingresos de hoy."""
+    return f"{agenda_del_dia()}\n\n────────────\n\n{ingresos_periodo(0)}"
+
+
+def procesar_comando_dueno(mensaje):
+    """Procesa comandos del dueño y devuelve respuesta."""
+    msg = normalizar(mensaje)
+
+    # También acepta números del menú privado.
+    if msg in ["1", "01", "uno"]:
+        return agenda_del_dia()
+
+    if msg in ["2", "02", "dos"]:
+        manana = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        return agenda_del_dia(manana)
+
+    if msg in ["3", "03", "tres"]:
+        hoy = datetime.now()
+        dias_semana_idx = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+        diff = (dias_semana_idx.index("viernes") - hoy.weekday()) % 7 or 7
+        fecha = (hoy + timedelta(days=diff)).strftime("%Y-%m-%d")
+        return agenda_del_dia(fecha)
+
+    if msg in ["4", "04", "cuatro"]:
+        return resumen_semana()
+
+    if msg in ["5", "05", "cinco"]:
+        return ingresos_periodo(0)
+
+    if msg in ["6", "06", "seis"]:
+        return ingresos_periodo(7)
+
+    if msg in ["7", "07", "siete"]:
+        return resumen_dueno()
+
+    # Agenda de hoy
+    if any(p in msg for p in ["agenda de hoy", "agenda hoy", "citas de hoy", "que hay hoy"]):
+        return agenda_del_dia()
+
+    # Agenda de mañana
+    if any(p in msg for p in ["agenda de manana", "agenda manana", "citas de manana"]):
+        manana = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        return agenda_del_dia(manana)
+
+    # Agenda de un día específico
+    if "agenda del" in msg or "citas del" in msg or "agenda" in msg or "citas" in msg:
+        dias_semana_idx = ["lunes","martes","miercoles","jueves","viernes","sabado","domingo"]
+        hoy = datetime.now()
+        for dia in dias_semana_idx:
+            if dia in msg:
+                diff = (dias_semana_idx.index(dia) - hoy.weekday()) % 7 or 7
+                fecha = (hoy + timedelta(days=diff)).strftime("%Y-%m-%d")
+                return agenda_del_dia(fecha)
+
+    # Resumen semanal
+    if any(p in msg for p in ["semana", "esta semana", "proximas citas", "próximas citas"]):
+        return resumen_semana()
+
+    # Ingresos
+    if any(p in msg for p in ["ingresos de hoy", "ventas de hoy", "ingreso hoy", "venta hoy"]):
+        return ingresos_periodo(0)
+
+    if any(p in msg for p in ["ingresos semana", "ingresos de la semana", "ventas semana", "ventas de la semana"]):
+        return ingresos_periodo(7)
+
+    # Resumen rápido
+    if any(p in msg for p in ["resumen", "reporte", "dashboard", "panel"]):
+        return resumen_dueno()
+
+    # Menú / ayuda
+    if es_entrada_modo_dueno(msg) or any(p in msg for p in ["ayuda", "comandos", "que puedes hacer", "menu"]):
+        return menu_dueno()
+
+    return menu_dueno()  # Si llegó al modo dueño pero no entendió, mostramos opciones
 
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE HORARIOS
@@ -551,6 +816,34 @@ def bot():
 
     print(f"\n📩 {remitente}: {mensaje}")
 
+    # ── MODO DUEÑO ACTIVADO CON PALABRA CLAVE ──────────────────
+    # Esto permite usar UN SOLO CELULAR para la demo:
+    # - Si escribes normal: entra Valentina como cliente.
+    # - Si escribes "soy dueño": se abre el panel privado.
+    # - Dentro del panel puedes consultar agenda, citas, ingresos y resumen.
+    # - Para volver a Valentina: escribe "salir" o "modo cliente".
+    if es_dueno(telefono):
+        if es_entrada_modo_dueno(mensaje):
+            owner_sessions[remitente] = True
+            respuesta_texto = menu_dueno()
+            resp = MessagingResponse()
+            resp.message(respuesta_texto)
+            print(f"👑 DUEÑO ACTIVADO: {respuesta_texto[:80]}...")
+            return Response(str(resp), mimetype="application/xml")
+
+        if owner_sessions.get(remitente):
+            if es_salida_modo_dueno(mensaje):
+                owner_sessions[remitente] = False
+                respuesta_texto = "Listo 😊 Volvemos al modo cliente. Escríbeme como clienta y te atiendo como Valentina 🌸"
+            else:
+                respuesta_texto = procesar_comando_dueno(mensaje)
+
+            resp = MessagingResponse()
+            resp.message(respuesta_texto)
+            print(f"👑 DUEÑO: {respuesta_texto[:80]}...")
+            return Response(str(resp), mimetype="application/xml")
+
+    # ── MODO CLIENTE ───────────────────────────────────────────
     if remitente not in user_history:
         user_history[remitente] = []
 
@@ -563,11 +856,11 @@ def bot():
         respuesta_texto = "Tuve un inconveniente 😊 ¿Puedes repetirme tu consulta?"
         msg_usuario = mensaje
 
-    # Guardamos solo texto plano en el historial — nunca tool blocks
+    # Guardamos solo texto plano en el historial
     user_history[remitente] = (historial + [
         {"role": "user",      "content": msg_usuario},
         {"role": "assistant", "content": respuesta_texto},
-    ])[-24:]  # máximo 12 turnos
+    ])[-24:]
 
     print(f"📤 VALENTINA: {respuesta_texto}")
 
