@@ -51,8 +51,12 @@ Puedes consultar respondiendo con el número o escribiendo el comando:
 5️⃣ 💰 *Ingresos de hoy* — ventas confirmadas del día
 6️⃣ 💰 *Ingresos semana* — ventas confirmadas de 7 días
 7️⃣ 📌 *Resumen* — agenda + ingresos de hoy
+8️⃣ 🔎 *Buscar cliente/cita* — ejemplo: buscar Oscar
+9️⃣ 🧾 *Historial de cambios* — últimas cancelaciones/reagendadas
+0️⃣ 🚪 *Salir* — volver al modo cliente
 
 Ejemplo: responde *1* para ver la agenda de hoy.
+También puedes escribir: *buscar Oscar* o *historial Oscar*.
 Escribe *salir* para volver al modo cliente 😊"""
 
 
@@ -209,9 +213,38 @@ def ingresos_periodo(dias=0):
 
 
 def resumen_dueno():
-    """Resumen rápido para demostración: citas e ingresos de hoy."""
-    return f"{agenda_del_dia()}\n\n────────────\n\n{ingresos_periodo(0)}"
+    """Resumen profesional para el dueño: agenda, ingresos y cambios recientes."""
+    try:
+        agenda = agenda_del_dia()
+        ingresos = ingresos_periodo(0)
 
+        try:
+            cambios = historial_citas_texto()
+        except Exception as e:
+            print(f"ERROR resumen historial: {e}")
+            cambios = "No pude consultar los cambios recientes en este momento."
+
+        # Limpiar título repetido del historial para que el resumen se vea mejor
+        cambios = cambios.replace("📋 *Últimos cambios de citas*", "").strip()
+
+        if not cambios:
+            cambios = "No hay cambios recientes registrados."
+
+        return (
+            "📌 *Resumen del día para dueño*\n\n"
+            "📅 *Agenda de hoy*\n"
+            f"{agenda}\n\n"
+            "────────────\n\n"
+            "💰 *Ingresos de hoy*\n"
+            f"{ingresos}\n\n"
+            "────────────\n\n"
+            "🔄 *Cambios recientes*\n"
+            f"{cambios}"
+        )
+
+    except Exception as e:
+        print(f"ERROR resumen dueño: {e}")
+        return "No pude generar el resumen del dueño en este momento 😊"
 
 def procesar_comando_dueno(mensaje):
     """Procesa comandos del dueño y devuelve respuesta."""
@@ -243,6 +276,28 @@ def procesar_comando_dueno(mensaje):
 
     if msg in ["7", "07", "siete"]:
         return resumen_dueno()
+
+    if msg in ["8", "08", "ocho"]:
+        return "🔎 Para buscar escribe: *buscar Nombre*\nEjemplo: *buscar Oscar*"
+
+    if msg in ["9", "09", "nueve"]:
+        return historial_citas_texto()
+
+    if msg in ["0", "00", "cero"]:
+        return "Escribe *salir* para volver al modo cliente 😊"
+
+    # Buscar cliente/cita
+    if msg.startswith("buscar ") or msg.startswith("cliente ") or msg.startswith("cita de "):
+        termino = msg.replace("buscar ", "", 1).replace("cliente ", "", 1).replace("cita de ", "", 1).strip()
+        return buscar_citas_texto(termino)
+
+    # Historial de cambios
+    if msg.startswith("historial "):
+        termino = msg.replace("historial ", "", 1).strip()
+        return historial_citas_texto(termino)
+
+    if any(p in msg for p in ["historial", "cambios", "reagendadas", "canceladas"]):
+        return historial_citas_texto()
 
     # Agenda de hoy
     if any(p in msg for p in ["agenda de hoy", "agenda hoy", "citas de hoy", "que hay hoy"]):
@@ -404,10 +459,24 @@ usa la herramienta get_servicios con la categoría que estabas mostrando para co
 Si el número corresponde al menú de CATEGORÍAS (1-7), muestra los servicios de esa categoría.
 
 POST-CITA CONFIRMADA:
-Cuando una cita queda confirmada, SIEMPRE ofrece agendar otro servicio así:
+Cuando una cita queda confirmada por la herramienta guardar_cita, SIEMPRE ofrece agendar otro servicio así:
 "¿Te gustaría aprovechar y agendar otro servicio para ese mismo día o en otra fecha? 
 Tenemos faciales, depilación, uñas y más 😊"
 Si el cliente dice que sí, inicia el flujo de agendamiento desde cero para el nuevo servicio.
+
+REGLA CRÍTICA DE CONFIRMACIÓN:
+- NUNCA digas que una cita quedó confirmada, cancelada o reagendada si la herramienta devolvió error.
+- Si la herramienta devuelve error, explica suavemente y pide confirmar el dato necesario.
+- Usa siempre la fecha exacta devuelta por get_horarios para guardar o reagendar.
+- No guardes ni confirmes fechas pasadas.
+
+REAGENDAR Y CANCELAR:
+- Si el cliente pide cambiar, mover o reagendar una cita, NO uses guardar_cita.
+- Primero identifica la cita del cliente. Si hace falta, usa buscar_citas_cliente.
+- Pide o confirma nueva fecha y hora.
+- Cuando nueva fecha y hora estén claras, usa reagendar_cita.
+- Si el cliente pide cancelar una cita, usa cancelar_cita cuando tengas identificado al cliente o su cita.
+- Después de reagendar, aclara que el horario anterior quedó liberado.
 
 OBJETIVO: Entender qué busca el cliente, recomendarle lo mejor, y llevarlo a agendar.
 Nunca dejes la conversación sin una invitación a continuar.
@@ -444,7 +513,8 @@ TOOLS = [
         "name": "get_horarios",
         "description": (
             "Devuelve los horarios disponibles para una fecha específica. "
-            "Úsala cuando el cliente quiere agendar y dice un día o fecha."
+            "Úsala cuando el cliente quiere agendar o reagendar y dice un día o fecha. "
+            "Devuelve la fecha exacta que luego debes usar para guardar o reagendar."
         ),
         "input_schema": {
             "type": "object",
@@ -465,7 +535,8 @@ TOOLS = [
         "description": (
             "Guarda una cita confirmada en la base de datos. "
             "Úsala SOLO cuando ya tienes: nombre del cliente, servicio elegido, "
-            "fecha y hora confirmados."
+            "fecha y hora confirmados. NO la uses para reagendar; para eso usa reagendar_cita. "
+            "La fecha debe ser futura y venir en formato YYYY-MM-DD."
         ),
         "input_schema": {
             "type": "object",
@@ -484,7 +555,7 @@ TOOLS = [
                 },
                 "fecha": {
                     "type": "string",
-                    "description": "Fecha en formato YYYY-MM-DD."
+                    "description": "Fecha en formato YYYY-MM-DD. Debe ser futura o de hoy."
                 },
                 "hora": {
                     "type": "string",
@@ -492,6 +563,59 @@ TOOLS = [
                 }
             },
             "required": ["nombre_cliente", "telefono", "nombre_servicio", "fecha", "hora"]
+        }
+    },
+    {
+        "name": "buscar_citas_cliente",
+        "description": (
+            "Busca citas de un cliente por nombre o teléfono. "
+            "Úsala cuando el cliente quiera cancelar, reagendar o preguntar por su cita."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nombre_cliente": {"type": "string", "description": "Nombre del cliente si lo conoces."},
+                "telefono": {"type": "string", "description": "Teléfono del cliente si lo conoces."}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "reagendar_cita",
+        "description": (
+            "Reagenda una cita real: cancela la cita anterior, libera ese horario y crea una nueva cita confirmada. "
+            "Úsala SOLO cuando el cliente ya confirmó la nueva fecha y hora."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nombre_cliente": {"type": "string", "description": "Nombre del cliente."},
+                "telefono": {"type": "string", "description": "Teléfono del cliente."},
+                "nombre_servicio": {"type": "string", "description": "Servicio de la cita, si se conoce."},
+                "fecha_actual": {"type": "string", "description": "Fecha actual de la cita si se conoce, YYYY-MM-DD."},
+                "hora_actual": {"type": "string", "description": "Hora actual de la cita si se conoce, HH:MM."},
+                "nueva_fecha": {"type": "string", "description": "Nueva fecha confirmada, YYYY-MM-DD."},
+                "nueva_hora": {"type": "string", "description": "Nueva hora confirmada, HH:MM."}
+            },
+            "required": ["nueva_fecha", "nueva_hora"]
+        }
+    },
+    {
+        "name": "cancelar_cita",
+        "description": (
+            "Cancela una cita real en la base de datos y libera el horario. "
+            "Úsala cuando el cliente confirme que desea cancelar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nombre_cliente": {"type": "string", "description": "Nombre del cliente."},
+                "telefono": {"type": "string", "description": "Teléfono del cliente."},
+                "nombre_servicio": {"type": "string", "description": "Servicio de la cita si se conoce."},
+                "fecha": {"type": "string", "description": "Fecha de la cita si se conoce, YYYY-MM-DD."},
+                "hora": {"type": "string", "description": "Hora de la cita si se conoce, HH:MM."}
+            },
+            "required": []
         }
     }
 ]
@@ -556,6 +680,261 @@ def interpretar_fecha(texto):
     except Exception:
         return None, None
 
+
+
+def limpiar_telefono_cliente(numero):
+    """Deja solo dígitos para evitar duplicados por whatsapp:+57, +57 o espacios."""
+    numero = (numero or "").replace("whatsapp:", "").strip()
+    return "".join(c for c in numero if c.isdigit())
+
+
+def validar_fecha_hora_futura(fecha, hora):
+    """Valida fecha/hora antes de guardar, cancelar o reagendar.
+    Evita citas en años/fechas pasadas por mala interpretación del modelo.
+    """
+    try:
+        fecha = (fecha or "").strip()
+        hora = (hora or "").strip()
+        if len(hora) == 4 and hora[1] == ":":
+            hora = "0" + hora
+        fecha_hora = datetime.strptime(f"{fecha} {hora}", "%Y-%m-%d %H:%M")
+    except Exception:
+        return {"error": "La fecha u hora no tienen formato válido. Usa fecha YYYY-MM-DD y hora HH:MM."}
+
+    ahora = datetime.now()
+    if fecha_hora < ahora:
+        return {
+            "error": (
+                f"La fecha {fecha} a las {hora} está en el pasado según el sistema. "
+                "No guardes la cita. Pide al cliente confirmar nuevamente el día y la hora."
+            )
+        }
+
+    return {
+        "fecha": fecha_hora.strftime("%Y-%m-%d"),
+        "hora": fecha_hora.strftime("%H:%M"),
+        "fecha_hora": fecha_hora.strftime("%Y-%m-%d %H:%M:00"),
+        "dt": fecha_hora,
+    }
+
+
+def fecha_legible(fecha_hora):
+    """Convierte fecha_hora a texto legible para WhatsApp."""
+    try:
+        if isinstance(fecha_hora, str):
+            dt = datetime.fromisoformat(fecha_hora.replace("Z", "").replace("T", " ")[:19])
+        else:
+            dt = fecha_hora
+        dias = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
+        meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
+        return f"{dias[dt.weekday()]} {dt.day} de {meses[dt.month-1]} a las {dt.strftime('%H:%M')}"
+    except Exception:
+        return str(fecha_hora)
+
+
+def registrar_historial(cita_id=None, cliente_id=None, accion="", fecha_anterior=None,
+                        fecha_nueva=None, estado_anterior=None, estado_nuevo=None, detalle=""):
+    """Guarda trazabilidad de creación, cancelación y reagendamiento."""
+    try:
+        supabase.table("historial_citas").insert({
+            "cita_id": cita_id,
+            "cliente_id": cliente_id,
+            "accion": accion,
+            "fecha_anterior": fecha_anterior,
+            "fecha_nueva": fecha_nueva,
+            "estado_anterior": estado_anterior,
+            "estado_nuevo": estado_nuevo,
+            "detalle": detalle,
+        }).execute()
+    except Exception as e:
+        # No debe romper el flujo principal si falla el historial.
+        print(f"ERROR historial_citas: {e}")
+
+
+def buscar_cliente(nombre_cliente=None, telefono=None):
+    """Busca un cliente por teléfono o por parte del nombre."""
+    telefono_limpio = limpiar_telefono_cliente(telefono)
+    try:
+        if telefono_limpio:
+            res = supabase.table("clientes").select("*").eq("telefono", telefono_limpio).execute()
+            if res.data:
+                return res.data[0]
+            # Compatibilidad con números guardados con +
+            res = supabase.table("clientes").select("*").eq("telefono", "+" + telefono_limpio).execute()
+            if res.data:
+                return res.data[0]
+        if nombre_cliente:
+            res = supabase.table("clientes").select("*").ilike("nombre", f"%{nombre_cliente}%").execute()
+            if res.data:
+                return res.data[0]
+    except Exception as e:
+        print(f"ERROR buscar_cliente: {e}")
+    return None
+
+
+def citas_activas_cliente(cliente_id, desde_ahora=True):
+    """Devuelve citas no canceladas del cliente, ordenadas por fecha."""
+    try:
+        q = supabase.table("citas") \
+            .select("id, cliente_id, servicio_id, fecha_hora, estado, clientes(nombre, telefono), servicios(nombre, precio)") \
+            .eq("cliente_id", cliente_id) \
+            .neq("estado", "cancelada")
+        if desde_ahora:
+            q = q.gte("fecha_hora", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        res = q.order("fecha_hora").execute()
+        return res.data or []
+    except Exception as e:
+        print(f"ERROR citas_activas_cliente: {e}")
+        return []
+
+
+def elegir_cita_para_operacion(cliente, nombre_servicio=None, fecha=None, hora=None):
+    """Elige la cita activa más probable para cancelar o reagendar."""
+    citas = citas_activas_cliente(cliente["id"], desde_ahora=True)
+    if not citas:
+        return None, []
+
+    filtradas = citas
+    if nombre_servicio:
+        ns = normalizar(nombre_servicio)
+        filtradas = [c for c in filtradas if ns in normalizar((c.get("servicios") or {}).get("nombre", ""))]
+
+    if fecha:
+        filtradas = [c for c in filtradas if str(c.get("fecha_hora", ""))[:10] == fecha]
+
+    if hora:
+        hora_norm = hora.strip()
+        if len(hora_norm) == 4 and hora_norm[1] == ":":
+            hora_norm = "0" + hora_norm
+        filtradas = [c for c in filtradas if str(c.get("fecha_hora", ""))[11:16] == hora_norm]
+
+    if not filtradas:
+        return None, citas
+    return filtradas[0], citas
+
+
+def formatear_cita(c):
+    cliente = c.get("clientes") or {}
+    servicio = c.get("servicios") or {}
+    precio = servicio.get("precio", 0)
+    return (
+        f"📌 {fecha_legible(c.get('fecha_hora'))}\n"
+        f"Cliente: {cliente.get('nombre', 'Sin nombre')}\n"
+        f"Tel: {cliente.get('telefono', 'Sin teléfono')}\n"
+        f"Servicio: {servicio.get('nombre', 'Sin servicio')}\n"
+        f"Precio: {formatear_precio(precio)}\n"
+        f"Estado: {c.get('estado', 'sin estado')}"
+    )
+
+
+def buscar_citas_texto(termino):
+    """Reporte para el dueño: busca cliente y muestra sus citas activas."""
+    termino = (termino or "").strip()
+    if not termino:
+        return "🔎 Escribe a quién quieres buscar. Ejemplo: *buscar Oscar*"
+
+    cliente = buscar_cliente(nombre_cliente=termino, telefono=termino)
+    if not cliente:
+        return f"🔎 No encontré clientes con: {termino}"
+
+    citas = citas_activas_cliente(cliente["id"], desde_ahora=False)
+    if not citas:
+        return (
+            f"🔎 Cliente encontrado:\n"
+            f"{cliente.get('nombre')}\nTel: {cliente.get('telefono')}\n\n"
+            "No tiene citas registradas."
+        )
+
+    lineas = [
+        f"🔎 *Cliente encontrado*\n{cliente.get('nombre')}\nTel: {cliente.get('telefono')}\n",
+        f"Citas registradas: {len(citas)}\n"
+    ]
+    for c in citas[-8:]:
+        servicio = c.get("servicios") or {}
+        estado = "✅" if c.get("estado") == "confirmada" else "⏳"
+        lineas.append(f"{estado} {fecha_legible(c.get('fecha_hora'))} — {servicio.get('nombre', 'Sin servicio')}")
+    return "\n".join(lineas)
+
+
+def historial_citas_texto(termino=None):
+    """Reporte para el dueño: historial general o filtrado por cliente."""
+    try:
+        cliente = None
+
+        # 1) Buscar cliente si el dueño escribió: historial Oscar / historial 300...
+        if termino:
+            cliente = buscar_cliente(nombre_cliente=termino, telefono=termino)
+            if not cliente:
+                return f"📋 No encontré cliente para consultar historial: {termino}"
+
+        # 2) Consultar historial SIN join embebido para evitar error PGRST200
+        q = supabase.table("historial_citas").select("*")
+
+        if cliente:
+            q = q.eq("cliente_id", cliente["id"])
+
+        res = q.order("creado_en", desc=True).limit(10).execute()
+        datos = res.data or []
+
+        if not datos:
+            if termino:
+                return f"📋 No encontré historial para {termino}."
+            return "📋 No hay historial de cambios todavía."
+
+        # 3) Traer clientes aparte
+        cliente_ids = list({h.get("cliente_id") for h in datos if h.get("cliente_id")})
+        clientes_map = {}
+
+        if cliente_ids:
+            clientes_res = (
+                supabase.table("clientes")
+                .select("id, nombre, telefono")
+                .in_("id", cliente_ids)
+                .execute()
+            )
+            for c in clientes_res.data or []:
+                clientes_map[c["id"]] = c
+
+        titulo = (
+            f"📋 *Historial de {cliente.get('nombre')}*"
+            if cliente
+            else "📋 *Últimos cambios de citas*"
+        )
+
+        lineas = [titulo, ""]
+
+        for h in datos:
+            cli = clientes_map.get(h.get("cliente_id"), {})
+            nombre_cliente = cli.get("nombre", "Cliente")
+            telefono_cliente = cli.get("telefono", "")
+
+            accion = h.get("accion", "cambio")
+            anterior = h.get("fecha_anterior") or "-"
+            nueva = h.get("fecha_nueva") or "-"
+            estado_anterior = h.get("estado_anterior") or "-"
+            estado_nuevo = h.get("estado_nuevo") or "-"
+            detalle = h.get("detalle") or ""
+            creado_en = h.get("creado_en") or ""
+
+            lineas.append(f"🔹 *{accion}*")
+            lineas.append(f"Cliente: {nombre_cliente}")
+            if telefono_cliente:
+                lineas.append(f"Tel: {telefono_cliente}")
+            lineas.append(f"Antes: {anterior}")
+            lineas.append(f"Ahora: {nueva}")
+            lineas.append(f"Estado: {estado_anterior} → {estado_nuevo}")
+            if detalle:
+                lineas.append(f"Detalle: {detalle}")
+            if creado_en:
+                lineas.append(f"Registro: {creado_en}")
+            lineas.append("")
+
+        return "\n".join(lineas).strip()
+
+    except Exception as e:
+        print(f"ERROR historial dueño: {e}")
+        return "No pude consultar el historial en este momento 😊"
+    
 # ═══════════════════════════════════════════════════════════════
 # EJECUCIÓN DE TOOLS
 # ═══════════════════════════════════════════════════════════════
@@ -585,13 +964,30 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
             })
         return {"servicios": lista}
 
-    # ── get_horarios ───────────────────────────────────────────
+        # ── get_horarios ───────────────────────────────────────────
     elif tool_name == "get_horarios":
         fecha_texto = tool_input.get("fecha_texto", "")
         fecha_str, dia_semana = interpretar_fecha(fecha_texto)
 
         if not fecha_str:
             return {"error": "No pude interpretar la fecha. Pide al cliente que aclare el día."}
+
+        # Seguridad: no ofrecer horarios en fechas pasadas
+        try:
+            fecha_consulta = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+            hoy_fecha = datetime.now().date()
+
+            if fecha_consulta < hoy_fecha:
+                return {
+                    "error": (
+                        f"Esa fecha ({fecha_str}) ya pasó. "
+                        "Pide al cliente una fecha futura para poder agendar."
+                    )
+                }
+        except Exception as e:
+            print(f"ERROR validando fecha en get_horarios: {e}")
+            return {"error": "No pude validar la fecha. Pide al cliente que la escriba nuevamente."}
+
         if dia_semana == "domingo":
             return {"error": "Los domingos estamos cerrados. Pide otro día."}
         if dia_semana not in HORARIOS_DISPONIBLES:
@@ -614,23 +1010,30 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
         if not disponibles:
             return {
                 "fecha": fecha_str,
-                "dia":   dia_semana,
+                "dia": dia_semana,
                 "error": f"Para el {dia_semana} ya no hay cupos disponibles."
             }
 
         return {
-            "fecha":       fecha_str,
-            "dia":         dia_semana,
+            "fecha": fecha_str,
+            "dia": dia_semana,
             "disponibles": disponibles
         }
 
     # ── guardar_cita ───────────────────────────────────────────
     elif tool_name == "guardar_cita":
         nombre   = tool_input["nombre_cliente"]
-        telefono = tool_input["telefono"]
+        telefono = limpiar_telefono_cliente(tool_input.get("telefono") or telefono_remitente)
         nombre_s = tool_input["nombre_servicio"]
         fecha    = tool_input["fecha"]
         hora     = tool_input["hora"]
+
+        valida_fecha = validar_fecha_hora_futura(fecha, hora)
+        if valida_fecha.get("error"):
+            return {"error": valida_fecha["error"]}
+        fecha = valida_fecha["fecha"]
+        hora = valida_fecha["hora"]
+        fecha_hora_completa = valida_fecha["fecha_hora"]
 
         # Buscar el servicio en BD
         resultado_s = supabase.table("servicios").select("*").execute()
@@ -661,7 +1064,6 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
             return {"error": "Problema al registrar el cliente."}
 
         # Verificar que el horario sigue libre
-        fecha_hora_completa = f"{fecha} {hora}:00"
         try:
             ocupado = supabase.table("citas").select("id") \
                 .eq("fecha_hora", fecha_hora_completa) \
@@ -681,6 +1083,15 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
             }).execute()
 
             if cita.data:
+                cita_creada = cita.data[0]
+                registrar_historial(
+                    cita_id=cita_creada.get("id"),
+                    cliente_id=cliente["id"],
+                    accion="cita_creada",
+                    fecha_nueva=fecha_hora_completa,
+                    estado_nuevo="confirmada",
+                    detalle=f"Cita creada para {nombre} — {nombre_s}"
+                )
                 return {
                     "exito":    True,
                     "mensaje":  f"Cita confirmada para {nombre} — {nombre_s} el {fecha} a las {hora}.",
@@ -694,6 +1105,166 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
         except Exception as e:
             print(f"ERROR guardar cita: {e}")
             return {"error": "Error al guardar la cita en el sistema."}
+
+
+    # ── buscar_citas_cliente ──────────────────────────────────
+    elif tool_name == "buscar_citas_cliente":
+        nombre = tool_input.get("nombre_cliente")
+        telefono = limpiar_telefono_cliente(tool_input.get("telefono") or telefono_remitente)
+        cliente = buscar_cliente(nombre_cliente=nombre, telefono=telefono)
+        if not cliente:
+            return {"error": "No encontré al cliente. Pide nombre completo o teléfono."}
+
+        citas = citas_activas_cliente(cliente["id"], desde_ahora=True)
+        if not citas:
+            return {
+                "cliente": cliente,
+                "citas": [],
+                "mensaje": "El cliente existe, pero no tiene citas activas próximas."
+            }
+
+        return {
+            "cliente": cliente,
+            "citas": [
+                {
+                    "id": c.get("id"),
+                    "fecha_hora": c.get("fecha_hora"),
+                    "estado": c.get("estado"),
+                    "servicio": (c.get("servicios") or {}).get("nombre"),
+                    "precio": (c.get("servicios") or {}).get("precio"),
+                    "texto": formatear_cita(c),
+                }
+                for c in citas
+            ]
+        }
+
+    # ── cancelar_cita ──────────────────────────────────────────
+    elif tool_name == "cancelar_cita":
+        nombre = tool_input.get("nombre_cliente")
+        telefono = limpiar_telefono_cliente(tool_input.get("telefono") or telefono_remitente)
+        nombre_s = tool_input.get("nombre_servicio")
+        fecha = tool_input.get("fecha")
+        hora = tool_input.get("hora")
+
+        cliente = buscar_cliente(nombre_cliente=nombre, telefono=telefono)
+        if not cliente:
+            return {"error": "No encontré al cliente. Pide nombre completo o teléfono para cancelar."}
+
+        cita_actual, citas_cliente = elegir_cita_para_operacion(cliente, nombre_s, fecha, hora)
+        if not cita_actual:
+            return {
+                "error": "No encontré una cita activa que coincida para cancelar.",
+                "citas_activas": [formatear_cita(c) for c in citas_cliente[:5]]
+            }
+
+        fecha_anterior = cita_actual.get("fecha_hora")
+        try:
+            supabase.table("citas").update({"estado": "cancelada"}).eq("id", cita_actual["id"]).execute()
+            registrar_historial(
+                cita_id=cita_actual["id"],
+                cliente_id=cliente["id"],
+                accion="cita_cancelada",
+                fecha_anterior=fecha_anterior,
+                estado_anterior=cita_actual.get("estado"),
+                estado_nuevo="cancelada",
+                detalle=f"Cita cancelada para {cliente.get('nombre')}"
+            )
+            return {
+                "exito": True,
+                "mensaje": "Cita cancelada correctamente. El horario quedó liberado.",
+                "cliente": cliente.get("nombre"),
+                "fecha_anterior": fecha_anterior,
+                "cita_cancelada": formatear_cita(cita_actual),
+            }
+        except Exception as e:
+            print(f"ERROR cancelar cita: {e}")
+            return {"error": "No pude cancelar la cita en este momento."}
+
+    # ── reagendar_cita ─────────────────────────────────────────
+    elif tool_name == "reagendar_cita":
+        nombre = tool_input.get("nombre_cliente")
+        telefono = limpiar_telefono_cliente(tool_input.get("telefono") or telefono_remitente)
+        nombre_s = tool_input.get("nombre_servicio")
+        fecha_actual = tool_input.get("fecha_actual")
+        hora_actual = tool_input.get("hora_actual")
+        nueva_fecha = tool_input.get("nueva_fecha")
+        nueva_hora = tool_input.get("nueva_hora")
+
+        valida_fecha = validar_fecha_hora_futura(nueva_fecha, nueva_hora)
+        if valida_fecha.get("error"):
+            return {"error": valida_fecha["error"]}
+        nueva_fecha_hora = valida_fecha["fecha_hora"]
+        nueva_fecha = valida_fecha["fecha"]
+        nueva_hora = valida_fecha["hora"]
+
+        cliente = buscar_cliente(nombre_cliente=nombre, telefono=telefono)
+        if not cliente:
+            return {"error": "No encontré al cliente. Pide nombre completo o teléfono para reagendar."}
+
+        cita_actual, citas_cliente = elegir_cita_para_operacion(cliente, nombre_s, fecha_actual, hora_actual)
+        if not cita_actual:
+            return {
+                "error": "No encontré una cita activa que coincida para reagendar.",
+                "citas_activas": [formatear_cita(c) for c in citas_cliente[:5]]
+            }
+
+        fecha_anterior = cita_actual.get("fecha_hora")
+
+        try:
+            ocupado = supabase.table("citas").select("id") \
+                .eq("fecha_hora", nueva_fecha_hora) \
+                .neq("estado", "cancelada") \
+                .neq("id", cita_actual["id"]) \
+                .execute()
+            if ocupado.data:
+                return {"error": f"El horario {nueva_hora} del {nueva_fecha} ya está ocupado. Pide otro horario."}
+        except Exception as e:
+            print(f"ERROR verificando horario reagenda: {e}")
+
+        try:
+            # Cancelamos la anterior para liberar el horario y conservar trazabilidad.
+            supabase.table("citas").update({"estado": "cancelada"}).eq("id", cita_actual["id"]).execute()
+
+            nueva = supabase.table("citas").insert({
+                "cliente_id": cita_actual["cliente_id"],
+                "servicio_id": cita_actual["servicio_id"],
+                "fecha_hora": nueva_fecha_hora,
+                "estado": "confirmada",
+            }).execute()
+
+            if not nueva.data:
+                # Si falla crear la nueva, intentamos devolver la anterior a confirmada.
+                try:
+                    supabase.table("citas").update({"estado": cita_actual.get("estado", "confirmada")}).eq("id", cita_actual["id"]).execute()
+                except Exception:
+                    pass
+                return {"error": "No pude crear la nueva cita. La cita anterior se conservó."}
+
+            nueva_cita = nueva.data[0]
+            registrar_historial(
+                cita_id=cita_actual["id"],
+                cliente_id=cliente["id"],
+                accion="cita_reagendada",
+                fecha_anterior=fecha_anterior,
+                fecha_nueva=nueva_fecha_hora,
+                estado_anterior=cita_actual.get("estado"),
+                estado_nuevo="confirmada",
+                detalle=f"Reagendada para {cliente.get('nombre')}. Horario anterior liberado. Nueva cita: {nueva_cita.get('id')}"
+            )
+            servicio = cita_actual.get("servicios") or {}
+            return {
+                "exito": True,
+                "mensaje": "Cita reagendada correctamente. El horario anterior quedó liberado.",
+                "cliente": cliente.get("nombre"),
+                "servicio": servicio.get("nombre"),
+                "fecha_anterior": fecha_anterior,
+                "fecha_nueva": nueva_fecha_hora,
+                "cita_anterior_cancelada_id": cita_actual["id"],
+                "nueva_cita_id": nueva_cita.get("id"),
+            }
+        except Exception as e:
+            print(f"ERROR reagendar cita: {e}")
+            return {"error": "No pude reagendar la cita en este momento."}
 
     return {"error": f"Tool desconocida: {tool_name}"}
 
@@ -746,10 +1317,19 @@ def responder(mensaje_usuario, historial, telefono):
     while iteracion < MAX_ITERACIONES:
         iteracion += 1
 
+        fecha_actual = datetime.now().strftime("%Y-%m-%d")
+        dia_actual = DIAS_ES.get(datetime.now().strftime("%A").lower(), datetime.now().strftime("%A"))
+        system_runtime = (
+            SYSTEM_PROMPT
+            + f"\n\nFECHA ACTUAL DEL SISTEMA: {fecha_actual} ({dia_actual}). "
+            + "Usa esta fecha como referencia para interpretar hoy, mañana, esta semana y próximas fechas. "
+            + "Nunca uses años pasados para agendar, cancelar o reagendar."
+        )
+
         respuesta = claude.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=700,
-            system=SYSTEM_PROMPT,
+            max_tokens=900,
+            system=system_runtime,
             tools=TOOLS,
             messages=mensajes,
         )
