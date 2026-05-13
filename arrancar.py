@@ -1736,6 +1736,93 @@ def bot():
             print(f"👑 DUEÑO: {respuesta_texto[:80]}...")
             return Response(str(resp), mimetype="application/xml")
 
+    # ── CLIENTE SIN AUTORIZACIÓN / NO CONTACTAR ───────────────
+    telefono_limpio_check = limpiar_telefono_cliente(telefono)
+    cliente_check = buscar_cliente(telefono=telefono_limpio_check)
+
+    if cliente_check and cliente_check.get("no_contactar"):
+        msg_normalizado = normalizar(mensaje)
+
+        if msg_normalizado in ["1", "si", "si acepto", "sí acepto", "acepto", "autorizo", "si autorizo", "sí autorizo"]:
+            marcar_opt_in(telefono, mensaje)
+            respuesta_texto = (
+                "Perfecto, gracias 😊 Ya registré tu autorización nuevamente.\n\n"
+                "Ahora sí, cuéntame qué te gustaría explorar hoy:\n\n"
+                "1️⃣ Masajes — relajante, descontracturante\n"
+                "2️⃣ Faciales — hidratación, anti-edad, limpieza\n"
+                "3️⃣ Depilación — piernas, axilas\n"
+                "4️⃣ Uñas — manicure clásico y semipermanente\n"
+                "5️⃣ Pestañas — diseño y lifting\n"
+                "6️⃣ Cabello — keratina, tinte y corte\n"
+                "7️⃣ Tratamientos corporales — reductivos\n\n"
+                "Responde con el número o cuéntame qué buscas 😊"
+            )
+            registrar_mensaje_log(telefono, "saliente", respuesta_texto, "reactivacion_opt_in")
+            resp = MessagingResponse()
+            resp.message(respuesta_texto)
+            return Response(str(resp), mimetype="application/xml")
+
+        respuesta_texto = (
+            "Actualmente no tenemos tu autorización para continuar la atención automática por WhatsApp. "
+            "Si deseas recibir ayuda para agendar o consultar servicios, responde *SI ACEPTO* 😊"
+        )
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "no_contactar_bloqueado")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+
+    # ── CONSENTIMIENTO INICIAL ANTES DE MOSTRAR SERVICIOS ─────
+    telefono_limpio = limpiar_telefono_cliente(telefono)
+    cliente_actual = buscar_cliente(telefono=telefono_limpio)
+
+    if not cliente_actual or (
+        not cliente_actual.get("whatsapp_opt_in") and not cliente_actual.get("no_contactar")
+    ):
+        msg_normalizado = normalizar(mensaje)
+
+        if msg_normalizado in ["1", "si", "si acepto", "sí acepto", "acepto", "autorizo", "si autorizo", "sí autorizo"]:
+            marcar_opt_in(telefono, mensaje)
+            respuesta_texto = (
+                "Perfecto, gracias 😊 Ya registré tu autorización.\n\n"
+                "Ahora sí, cuéntame qué te gustaría explorar hoy:\n\n"
+                "1️⃣ Masajes — relajante, descontracturante\n"
+                "2️⃣ Faciales — hidratación, anti-edad, limpieza\n"
+                "3️⃣ Depilación — piernas, axilas\n"
+                "4️⃣ Uñas — manicure clásico y semipermanente\n"
+                "5️⃣ Pestañas — diseño y lifting\n"
+                "6️⃣ Cabello — keratina, tinte y corte\n"
+                "7️⃣ Tratamientos corporales — reductivos\n\n"
+                "Responde con el número o cuéntame qué buscas 😊"
+            )
+            registrar_mensaje_log(telefono, "saliente", respuesta_texto, "opt_in_inicial")
+            resp = MessagingResponse()
+            resp.message(respuesta_texto)
+            return Response(str(resp), mimetype="application/xml")
+
+        if msg_normalizado in ["2", "no", "no acepto", "rechazo", "no autorizo"]:
+            marcar_no_contactar(telefono)
+            respuesta_texto = (
+                "Entiendo. No registraremos tu autorización para continuar por WhatsApp. "
+                "Si más adelante deseas recibir ayuda para agendar, puedes escribir *SI ACEPTO* 😊"
+            )
+            registrar_mensaje_log(telefono, "saliente", respuesta_texto, "no_acepta")
+            resp = MessagingResponse()
+            resp.message(respuesta_texto)
+            return Response(str(resp), mimetype="application/xml")
+
+        respuesta_texto = (
+            "¡Hola! 🌸 Bienvenido/a a Spa Bella, soy Valentina, la recepción virtual.\n"
+            "Estoy aquí para consentirte.\n\n"
+            "Antes de continuar, ¿aceptas que Spa Bella trate tus datos para atender tu solicitud, "
+            "gestionar tu cita y enviarte mensajes relacionados con tu reserva por WhatsApp?\n\n"
+            "1️⃣ Sí acepto\n"
+            "2️⃣ No acepto"
+        )
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "consentimiento_inicial")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+    
     # ── CUMPLIMIENTO WHATSAPP: BAJA / OPT-IN / HUMANO ─────────
     if es_solicitud_baja(mensaje):
         marcar_no_contactar(telefono)
