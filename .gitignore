@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 *_backup_*.py
 arrancar_backup_*.py
+sk-ant-*
