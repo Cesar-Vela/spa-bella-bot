@@ -95,7 +95,6 @@ def es_solicitud_baja(mensaje):
     palabras_baja = [
         "baja",
         "stop",
-        "salir",
         "no me escriban",
         "no mas mensajes",
         "no más mensajes",
@@ -1305,7 +1304,7 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
     # ── guardar_cita ───────────────────────────────────────────
     elif tool_name == "guardar_cita":
         nombre   = tool_input["nombre_cliente"]
-        telefono = limpiar_telefono_cliente(tool_input.get("telefono") or telefono_remitente)
+        telefono = limpiar_telefono_cliente(telefono_remitente)
         nombre_s = tool_input["nombre_servicio"]
         fecha    = tool_input["fecha"]
         hora     = tool_input["hora"]
