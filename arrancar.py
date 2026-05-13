@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import unicodedata
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -53,10 +54,13 @@ Puedes consultar respondiendo con el número o escribiendo el comando:
 7️⃣ 📌 *Resumen* — agenda + ingresos de hoy
 8️⃣ 🔎 *Buscar cliente/cita* — ejemplo: buscar Oscar
 9️⃣ 🧾 *Historial de cambios* — últimas cancelaciones/reagendadas
+🔒 *Bloquear horario* — ejemplo: bloquear viernes 15:00 reunión personal
+🔓 *Liberar horario* — ejemplo: liberar viernes 15:00
+📋 *Ver bloqueos* — muestra horarios bloqueados activos
 0️⃣ 🚪 *Salir* — volver al modo cliente
 
 Ejemplo: responde *1* para ver la agenda de hoy.
-También puedes escribir: *buscar Oscar* o *historial Oscar*.
+También puedes escribir: *buscar Oscar*, *historial Oscar*, *bloquear viernes 15:00* o *ver bloqueos*.
 Escribe *salir* para volver al modo cliente 😊"""
 
 
@@ -77,10 +81,163 @@ def es_comando_dueno(mensaje):
     msg = normalizar(mensaje)
     palabras_clave = [
         "agenda", "citas", "semana", "ingresos", "ventas",
-        "reporte", "resumen", "comandos", "ayuda", "menu"
+        "reporte", "resumen", "comandos", "ayuda", "menu",
+        "bloquear", "liberar", "bloqueos", "ver bloqueos"
     ]
     return any(palabra in msg for palabra in palabras_clave)
+def es_solicitud_baja(mensaje):
+    """
+    Detecta si el usuario quiere dejar de recibir mensajes automáticos.
+    Esto ayuda a cumplir políticas de WhatsApp.
+    """
+    msg = normalizar(mensaje)
 
+    palabras_baja = [
+        "baja",
+        "stop",
+        "salir",
+        "no me escriban",
+        "no mas mensajes",
+        "no más mensajes",
+        "cancelar mensajes",
+        "dejar de recibir",
+        "no quiero recibir",
+        "no contactar"
+    ]
+
+    return any(palabra in msg for palabra in palabras_baja)
+
+
+def es_confirmacion_optin(mensaje):
+    """Detecta autorización explícita para recibir mensajes relacionados con la cita."""
+    msg = normalizar(mensaje)
+    return msg in ["si acepto", "sí acepto", "acepto", "autorizo", "si autorizo", "sí autorizo"]
+
+
+def es_solicitud_humano(mensaje):
+    """Detecta cuando un cliente pide atención de una persona."""
+    msg = normalizar(mensaje)
+    palabras_humano = [
+        "asesor",
+        "humano",
+        "persona",
+        "hablar con alguien",
+        "quiero hablar con alguien",
+        "llamar",
+        "llamada",
+        "necesito ayuda",
+        "que me contacten",
+        "que me contacte",
+        "atencion humana",
+        "atención humana"
+    ]
+    return any(p in msg for p in palabras_humano)
+
+
+def marcar_no_contactar(telefono):
+    """
+    Marca un cliente como no_contactar en Supabase.
+    Funciona aunque el teléfono venga con whatsapp:, con +, sin + o con espacios.
+    Si el cliente no existe, lo crea como contacto bloqueado.
+    """
+    try:
+        telefono_original = (telefono or "").replace("whatsapp:", "").strip()
+        telefono_limpio = limpiar_telefono_cliente(telefono_original)
+
+        posibles_telefonos = list({
+            telefono_original,
+            telefono_limpio,
+            f"+{telefono_limpio}" if telefono_limpio else "",
+        })
+        posibles_telefonos = [t for t in posibles_telefonos if t]
+
+        datos_baja = {
+            "no_contactar": True,
+            "no_contactar_fecha": datetime.now().isoformat()
+        }
+
+        cliente_encontrado = None
+
+        for tel in posibles_telefonos:
+            res = supabase.table("clientes").select("*").eq("telefono", tel).execute()
+            if res.data:
+                cliente_encontrado = res.data[0]
+                break
+
+        if cliente_encontrado:
+            supabase.table("clientes").update(datos_baja).eq("id", cliente_encontrado["id"]).execute()
+            print(f"✅ Cliente marcado como no_contactar: {cliente_encontrado.get('telefono')}")
+            return True
+
+        nuevo_cliente = {
+            "nombre": "Cliente sin nombre",
+            "telefono": telefono_limpio,
+            "no_contactar": True,
+            "no_contactar_fecha": datetime.now().isoformat()
+        }
+
+        supabase.table("clientes").insert(nuevo_cliente).execute()
+        print(f"✅ Cliente creado y marcado como no_contactar: {telefono_limpio}")
+        return True
+
+    except Exception as e:
+        print("❌ Error marcando no_contactar:", e)
+        return False
+
+
+def marcar_opt_in(telefono, texto="SI ACEPTO"):
+    """Guarda autorización WhatsApp del cliente para mensajes relacionados con la reserva."""
+    try:
+        telefono_limpio = limpiar_telefono_cliente(telefono)
+        cliente = buscar_cliente(telefono=telefono_limpio)
+
+        datos = {
+            "whatsapp_opt_in": True,
+            "opt_in_fecha": datetime.now().isoformat(),
+            "opt_in_texto": texto,
+            "no_contactar": False,
+            "no_contactar_fecha": None,
+        }
+
+        if cliente:
+            supabase.table("clientes").update(datos).eq("id", cliente["id"]).execute()
+        else:
+            datos.update({"nombre": "Cliente WhatsApp", "telefono": telefono_limpio})
+            supabase.table("clientes").insert(datos).execute()
+
+        return True
+
+    except Exception as e:
+        print("❌ Error marcando opt-in:", e)
+        return False
+
+
+def registrar_solicitud_humano(telefono, nombre=None, motivo=""):
+    """Registra una solicitud de atención humana para revisión del dueño/equipo."""
+    try:
+        supabase.table("solicitudes_humano").insert({
+            "telefono": limpiar_telefono_cliente(telefono),
+            "nombre": nombre,
+            "motivo": motivo,
+            "estado": "pendiente",
+        }).execute()
+        return True
+    except Exception as e:
+        print("❌ Error registrando solicitud humana:", e)
+        return False
+
+
+def registrar_mensaje_log(telefono, direccion, mensaje, tipo="whatsapp"):
+    """Registra mensajes para control de consumo y auditoría básica."""
+    try:
+        supabase.table("mensajes_log").insert({
+            "telefono": limpiar_telefono_cliente(telefono),
+            "direccion": direccion,
+            "mensaje": mensaje,
+            "tipo": tipo,
+        }).execute()
+    except Exception as e:
+        print("⚠️ No se pudo registrar mensaje_log:", e)
 
 def agenda_del_dia(fecha_str=None):
     """Devuelve las citas del día como texto formateado."""
@@ -250,6 +407,16 @@ def procesar_comando_dueno(mensaje):
     """Procesa comandos del dueño y devuelve respuesta."""
     msg = normalizar(mensaje)
 
+    # Bloqueos de agenda del dueño
+    if msg.startswith("bloquear"):
+        return bloquear_horario_dueno(mensaje, OWNER_PHONE)
+
+    if msg.startswith("liberar"):
+        return liberar_horario_dueno(mensaje)
+
+    if any(p in msg for p in ["ver bloqueos", "bloqueos", "horarios bloqueados"]):
+        return ver_bloqueos_dueno()
+
     # También acepta números del menú privado.
     if msg in ["1", "01", "uno"]:
         return agenda_del_dia()
@@ -408,14 +575,17 @@ DESCRIPCIONES_SERVICIO = {
 # PERSONALIDAD DE VALENTINA
 # ═══════════════════════════════════════════════════════════════
 SYSTEM_PROMPT = """
-Eres Valentina, recepcionista y asesora de bienestar de Spa Bella.
-Atiendes por WhatsApp como una persona real — cálida, cercana, con experiencia en spa.
+Eres Valentina, recepción virtual y asesora de bienestar de Spa Bella.
+Atiendes por WhatsApp con un tono cálido, cercano y profesional.
+Tu función es ayudar a los clientes a conocer servicios, precios, horarios y agendar citas.
 
 ESTILO:
 - Conversacional y natural. Como si estuvieras en la recepción del spa.
 - Máximo 4 líneas salvo cuando muestres menús numerados de servicios.
 - Emojis con moderación: 🌸 💆‍♀️ ✨ 😊 (máximo 2 por mensaje).
-- NUNCA digas que eres IA, bot o asistente virtual. Eres Valentina.
+- Preséntate como Valentina, la recepción virtual de Spa Bella.
+- No expliques detalles técnicos salvo que el cliente pregunte.
+- Si el cliente pide hablar con una persona, ofrece escalar con el equipo humano.
 - Siempre termina con una invitación a la acción.
 
 REGLAS:
@@ -428,7 +598,7 @@ REGLAS:
 BIENVENIDA — PRIMER MENSAJE:
 Cuando el cliente saluda por primera vez, preséntate y muestra SIEMPRE el menú de categorías:
 
-"¡Hola! 🌸 Bienvenida a Spa Bella, soy Valentina.
+"¡Hola! 🌸 Bienvenida a Spa Bella, soy Valentina, la recepción virtual.
 Estoy aquí para consentirte. ¿Qué te gustaría explorar hoy?
 
 1️⃣ Masajes — relajante, descontracturante
@@ -718,6 +888,104 @@ def validar_fecha_hora_futura(fecha, hora):
     }
 
 
+
+def extraer_fecha_hora_desde_texto(texto):
+    """Extrae fecha y hora desde comandos del dueño como 'bloquear viernes 15:00'."""
+    texto_original = texto or ""
+    texto_n = normalizar(texto_original)
+
+    hora_match = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", texto_n)
+    if not hora_match:
+        # Soporte básico para 3pm, 3 pm, 10am
+        hora_match_ampm = re.search(r"\b(1[0-2]|0?[1-9])\s*(am|pm)\b", texto_n)
+        if not hora_match_ampm:
+            return None, None, None
+        h = int(hora_match_ampm.group(1))
+        ampm = hora_match_ampm.group(2)
+        if ampm == "pm" and h != 12:
+            h += 12
+        if ampm == "am" and h == 12:
+            h = 0
+        hora = f"{h:02d}:00"
+    else:
+        hora = f"{int(hora_match.group(1)):02d}:{hora_match.group(2)}"
+
+    texto_fecha = texto_n
+    for palabra in ["bloquear", "liberar", "horario", "espacio"]:
+        texto_fecha = texto_fecha.replace(palabra, " ")
+    texto_fecha = re.sub(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", " ", texto_fecha)
+    texto_fecha = re.sub(r"\b(1[0-2]|0?[1-9])\s*(am|pm)\b", " ", texto_fecha)
+    texto_fecha = " ".join(texto_fecha.split())
+
+    fecha, dia = interpretar_fecha(texto_fecha)
+    motivo = texto_original
+    return fecha, hora, motivo
+
+
+def bloquear_horario_dueno(mensaje, telefono):
+    """Bloquea un horario para que no aparezca disponible a clientes."""
+    fecha, hora, motivo = extraer_fecha_hora_desde_texto(mensaje)
+    if not fecha or not hora:
+        return "🔒 Para bloquear necesito día y hora. Ejemplo: *bloquear viernes 15:00 reunión personal*."
+
+    valida = validar_fecha_hora_futura(fecha, hora)
+    if valida.get("error"):
+        return f"🔒 No pude bloquear ese espacio: {valida['error']}"
+
+    try:
+        existe = supabase.table("bloqueos_agenda").select("id") \
+            .eq("fecha", fecha).eq("hora", hora).eq("activo", True).execute()
+        if existe.data:
+            return f"🔒 Ese horario ya estaba bloqueado: {fecha} {hora}."
+
+        supabase.table("bloqueos_agenda").insert({
+            "fecha": fecha,
+            "hora": hora,
+            "motivo": motivo,
+            "creado_por": limpiar_telefono_cliente(telefono),
+            "activo": True,
+        }).execute()
+        return f"✅ Listo. Bloqueé el {fecha} a las {hora}. Ese espacio ya no aparecerá disponible para clientes."
+    except Exception as e:
+        print("ERROR bloqueando horario:", e)
+        return "No pude bloquear ese horario en este momento."
+
+
+def liberar_horario_dueno(mensaje):
+    """Libera un horario previamente bloqueado."""
+    fecha, hora, _ = extraer_fecha_hora_desde_texto(mensaje)
+    if not fecha or not hora:
+        return "🔓 Para liberar necesito día y hora. Ejemplo: *liberar viernes 15:00*."
+
+    try:
+        supabase.table("bloqueos_agenda").update({"activo": False}) \
+            .eq("fecha", fecha).eq("hora", hora).eq("activo", True).execute()
+        return f"✅ Listo. Liberé el {fecha} a las {hora}. Si no hay cita ocupando ese espacio, volverá a aparecer disponible."
+    except Exception as e:
+        print("ERROR liberando horario:", e)
+        return "No pude liberar ese horario en este momento."
+
+
+def ver_bloqueos_dueno():
+    """Muestra bloqueos activos próximos."""
+    try:
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        res = supabase.table("bloqueos_agenda").select("fecha, hora, motivo, created_at") \
+            .gte("fecha", hoy).eq("activo", True).order("fecha").limit(20).execute()
+        datos = res.data or []
+        if not datos:
+            return "📋 No hay bloqueos activos próximos."
+
+        lineas = ["📋 *Bloqueos activos de agenda*\n"]
+        for b in datos:
+            hora = str(b.get("hora", ""))[:5]
+            motivo = b.get("motivo") or "Sin motivo"
+            lineas.append(f"🔒 {b.get('fecha')} {hora} — {motivo}")
+        return "\n".join(lineas)
+    except Exception as e:
+        print("ERROR ver bloqueos:", e)
+        return "No pude consultar los bloqueos en este momento."
+
 def fecha_legible(fecha_hora):
     """Convierte fecha_hora a texto legible para WhatsApp."""
     try:
@@ -998,11 +1266,25 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
         fin    = f"{fecha_str} 23:59:59"
 
         try:
+            # 1) Horarios ocupados por citas existentes
             citas = supabase.table("citas").select("fecha_hora") \
                 .gte("fecha_hora", inicio).lte("fecha_hora", fin) \
                 .neq("estado", "cancelada").execute()
-            ocupadas = {str(c["fecha_hora"])[11:16] for c in citas.data}
-            disponibles = [h for h in horarios_base if h not in ocupadas]
+            ocupadas = {str(c.get("fecha_hora", ""))[11:16] for c in (citas.data or [])}
+
+            # 2) Horarios bloqueados por el dueño desde el panel privado
+            bloqueos = supabase.table("bloqueos_agenda").select("hora") \
+                .eq("fecha", fecha_str) \
+                .eq("activo", True) \
+                .execute()
+            bloqueadas = {str(b.get("hora", ""))[:5] for b in (bloqueos.data or [])}
+
+            # 3) Disponibles reales = horarios base menos citas ocupadas y bloqueos activos
+            no_disponibles = ocupadas | bloqueadas
+            disponibles = [h for h in horarios_base if h not in no_disponibles]
+
+            print(f"🕒 Horarios {fecha_str}: ocupadas={ocupadas}, bloqueadas={bloqueadas}, disponibles={disponibles}")
+
         except Exception as e:
             print(f"ERROR horarios: {e}")
             disponibles = horarios_base
@@ -1063,6 +1345,25 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
             print(f"ERROR cliente: {e}")
             return {"error": "Problema al registrar el cliente."}
 
+        # Cumplimiento WhatsApp: no confirmar citas sin autorización explícita
+        if cliente.get("no_contactar"):
+            return {
+                "error": (
+                    "Este cliente solicitó no recibir mensajes automáticos. "
+                    "Pide atención humana antes de continuar."
+                )
+            }
+
+        if not cliente.get("whatsapp_opt_in"):
+            return {
+                "error": (
+                    "Antes de confirmar la cita, pide autorización explícita. "
+                    "Envía este texto al cliente: Para confirmar tu cita y poder enviarte mensajes relacionados con esta reserva por WhatsApp, "
+                    "¿autorizas a Spa Bella a contactarte por este medio? Responde: SI ACEPTO. "
+                    "No confirmes la cita hasta que responda SI ACEPTO."
+                )
+            }
+
         # Verificar que el horario sigue libre
         try:
             ocupado = supabase.table("citas").select("id") \
@@ -1070,6 +1371,10 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
                 .neq("estado", "cancelada").execute()
             if ocupado.data:
                 return {"error": f"El horario {hora} del {fecha} acaba de ocuparse. Pide al cliente que elija otro."}
+
+            bloqueado = supabase.table("bloqueos_agenda").select("id")                 .eq("fecha", fecha).eq("hora", hora).eq("activo", True).execute()
+            if bloqueado.data:
+                return {"error": f"El horario {hora} del {fecha} no está disponible. Pide al cliente que elija otro."}
         except Exception as e:
             print(f"ERROR verificando horario: {e}")
 
@@ -1218,6 +1523,10 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
                 .execute()
             if ocupado.data:
                 return {"error": f"El horario {nueva_hora} del {nueva_fecha} ya está ocupado. Pide otro horario."}
+
+            bloqueado = supabase.table("bloqueos_agenda").select("id")                 .eq("fecha", nueva_fecha).eq("hora", nueva_hora).eq("activo", True).execute()
+            if bloqueado.data:
+                return {"error": f"El horario {nueva_hora} del {nueva_fecha} está bloqueado por el negocio. Pide otro horario."}
         except Exception as e:
             print(f"ERROR verificando horario reagenda: {e}")
 
@@ -1396,6 +1705,10 @@ def bot():
 
     print(f"\n📩 {remitente}: {mensaje}")
 
+    # Log de mensaje entrante para auditoría y control de consumo.
+    # No rompe el flujo si Supabase falla, porque registrar_mensaje_log ya maneja excepciones.
+    registrar_mensaje_log(telefono, "entrante", mensaje, "whatsapp")
+
     # ── MODO DUEÑO ACTIVADO CON PALABRA CLAVE ──────────────────
     # Esto permite usar UN SOLO CELULAR para la demo:
     # - Si escribes normal: entra Valentina como cliente.
@@ -1423,6 +1736,40 @@ def bot():
             print(f"👑 DUEÑO: {respuesta_texto[:80]}...")
             return Response(str(resp), mimetype="application/xml")
 
+    # ── CUMPLIMIENTO WHATSAPP: BAJA / OPT-IN / HUMANO ─────────
+    if es_solicitud_baja(mensaje):
+        marcar_no_contactar(telefono)
+        respuesta_texto = (
+            "Listo, registramos tu solicitud. No volveremos a enviarte mensajes automáticos por WhatsApp, "
+            "salvo que tú nos escribas nuevamente."
+        )
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "baja")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+
+    if es_confirmacion_optin(mensaje):
+        marcar_opt_in(telefono, mensaje)
+        respuesta_texto = (
+            "Perfecto, gracias. Ya registré tu autorización para recibir mensajes relacionados con tu reserva por WhatsApp. "
+            "Ahora puedo ayudarte a continuar con tu cita 😊"
+        )
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "opt_in")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+
+    if es_solicitud_humano(mensaje):
+        registrar_solicitud_humano(telefono, motivo=mensaje)
+        respuesta_texto = (
+            "Claro 😊 Dejé registrada tu solicitud para que el equipo de Spa Bella te contacte. "
+            "Por favor envíanos tu nombre y el motivo de la consulta para ayudarte mejor."
+        )
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "humano")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+
     # ── MODO CLIENTE ───────────────────────────────────────────
     if remitente not in user_history:
         user_history[remitente] = []
@@ -1443,6 +1790,7 @@ def bot():
     ])[-24:]
 
     print(f"📤 VALENTINA: {respuesta_texto}")
+    registrar_mensaje_log(telefono, "saliente", respuesta_texto, "whatsapp")
 
     resp = MessagingResponse()
     resp.message(respuesta_texto)
