@@ -140,6 +140,7 @@ def procesar_comando_demo(mensaje, telefono, remitente):
 
     if msg in ["1", "nuevo cliente demo", "nuevo demo", "reiniciar demo"]:
         limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=False)
+        demo_sessions[remitente] = False
         return (
             "🧪 Listo. Inicié un *nuevo cliente demo* para este WhatsApp.\n\n"
             "Ahora escribe *hola* y el bot pedirá consentimiento desde cero."
@@ -151,13 +152,18 @@ def procesar_comando_demo(mensaje, telefono, remitente):
 
     if msg in ["3", "limpiar consentimiento", "limpiar consentimiento demo", "reset consentimiento"]:
         limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=False)
-        return "🧪 Listo. Limpié consentimiento y bloqueo demo. El próximo *hola* pedirá autorización."
+        demo_sessions[remitente] = False
+        return (
+            "🧪 Listo. Limpié consentimiento y bloqueos demo.\n\n"
+            "Ahora escribe *hola* y el bot pedirá autorización desde cero."
+        )
 
     if msg in ["4", "cliente autorizado demo", "autorizar demo", "demo autorizado"]:
         limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=True)
+        demo_sessions[remitente] = False
         return (
-            "🧪 Listo. Este WhatsApp quedó como *cliente autorizado demo*.\n"
-            "Ahora puedes iniciar una conversación sin que vuelva a pedir consentimiento inicial."
+            "🧪 Listo. Dejé este WhatsApp como *cliente autorizado demo*.\n\n"
+            "Ahora escribe *hola* y el bot podrá mostrar el menú sin pedir consentimiento."
         )
 
     if es_salida_modo_demo(mensaje):
