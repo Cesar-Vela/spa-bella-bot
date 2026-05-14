@@ -141,6 +141,7 @@ def procesar_comando_demo(mensaje, telefono, remitente):
     if msg in ["1", "nuevo cliente demo", "nuevo demo", "reiniciar demo"]:
         limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=False)
         demo_sessions[remitente] = False
+        owner_sessions[remitente] = False
         return (
             "🧪 Listo. Inicié un *nuevo cliente demo* para este WhatsApp.\n\n"
             "Ahora escribe *hola* y el bot pedirá consentimiento desde cero."
@@ -153,17 +154,16 @@ def procesar_comando_demo(mensaje, telefono, remitente):
     if msg in ["3", "limpiar consentimiento", "limpiar consentimiento demo", "reset consentimiento"]:
         limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=False)
         demo_sessions[remitente] = False
-        return (
-            "🧪 Listo. Limpié consentimiento y bloqueos demo.\n\n"
-            "Ahora escribe *hola* y el bot pedirá autorización desde cero."
-        )
+        owner_sessions[remitente] = False
+        return "🧪 Listo. Limpié consentimiento demo. Ahora escribe *hola* y el bot pedirá autorización desde cero."
 
     if msg in ["4", "cliente autorizado demo", "autorizar demo", "demo autorizado"]:
         limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=True)
         demo_sessions[remitente] = False
+        owner_sessions[remitente] = False
         return (
-            "🧪 Listo. Dejé este WhatsApp como *cliente autorizado demo*.\n\n"
-            "Ahora escribe *hola* y el bot podrá mostrar el menú sin pedir consentimiento."
+            "🧪 Listo. Este WhatsApp quedó como *cliente autorizado demo*.\n"
+            "Ahora puedes iniciar una conversación sin que vuelva a pedir consentimiento inicial."
         )
 
     if es_salida_modo_demo(mensaje):
@@ -203,7 +203,6 @@ def es_solicitud_baja(mensaje):
     palabras_baja = [
         "baja",
         "stop",
-        "salir",
         "no me escriban",
         "no mas mensajes",
         "no más mensajes",
@@ -757,9 +756,10 @@ REAGENDAR Y CANCELAR:
 - Después de reagendar, aclara que el horario anterior quedó liberado.
 
 CUMPLIMIENTO WHATSAPP:
-- El sistema ya valida el consentimiento antes de mostrar servicios o confirmar citas.
-- Si una herramienta indica que el cliente ya autorizó, NO vuelvas a pedir autorización.
-- Si recibes un mensaje interno que dice que el cliente ya autorizó, retoma la cita pendiente automáticamente.
+- El sistema valida el consentimiento antes de mostrar servicios o confirmar citas.
+- Si el cliente ya autorizó, NO vuelvas a pedir autorización.
+- Si el cliente escribe SI ACEPTO, registra autorización y continúa de forma segura desde el menú; no confirmes citas antiguas por historial viejo.
+- Nunca confirmes una cita si el cliente no eligió claramente servicio, fecha, hora y nombre en la conversación actual.
 
 OBJETIVO: Entender qué busca el cliente, recomendarle lo mejor, y llevarlo a agendar.
 Nunca dejes la conversación sin una invitación a continuar.
@@ -1830,41 +1830,37 @@ def menu_servicios_post_optin(reactivacion=False):
 
 
 def responder_post_optin(telefono, remitente, mensaje, reactivacion=False):
-    """Registra autorización y, si había una conversación activa, la retoma automáticamente.
-    Esto evita pedir SI ACEPTO y luego obligar al cliente a escribir 'continuar'.
+    """Registra autorización WhatsApp de forma segura.
+
+    V12.5:
+    - Registra opt-in.
+    - Limpia historial conversacional viejo para evitar confirmar citas antiguas.
+    - No retoma automáticamente conversaciones pendientes.
+    - Muestra menú normal para que el cliente continúe conscientemente.
     """
     marcar_opt_in(telefono, mensaje)
 
-    historial = user_history.get(remitente, [])
-
-    if historial:
-        mensaje_reanudacion = (
-            "El cliente ya autorizó explícitamente el tratamiento de datos y mensajes relacionados "
-            "con su reserva por WhatsApp. Continúa exactamente con la cita o conversación pendiente "
-            "usando la información anterior. No vuelvas a pedir autorización. Si ya tienes servicio, "
-            "fecha, hora y nombre, intenta confirmar la cita."
-        )
-
-        try:
-            respuesta_texto, _ = responder(mensaje_reanudacion, historial, telefono)
-            user_history[remitente] = (historial + [
-                {"role": "user", "content": "SI ACEPTO"},
-                {"role": "assistant", "content": respuesta_texto},
-            ])[-24:]
-            return respuesta_texto
-        except Exception as e:
-            print(f"❌ ERROR retomando después de opt-in: {e}")
-            return (
-                "Perfecto, gracias 😊 Ya registré tu autorización. "
-                "Ahora sí, continuemos con tu cita. ¿Me confirmas el servicio, día y hora?"
-            )
+    try:
+        user_history.pop(remitente, None)
+    except Exception:
+        pass
 
     return menu_servicios_post_optin(reactivacion=reactivacion)
-
 
 # ═══════════════════════════════════════════════════════════════
 # ENDPOINT PRINCIPAL
 # ═══════════════════════════════════════════════════════════════
+@app.route("/health", methods=["GET"])
+def health():
+    return {
+        "ok": True,
+        "service": "VEL-AI Agenda Spa Bella",
+        "version": "V12.5",
+        "time": datetime.now().isoformat(),
+        "demo_mode": DEMO_MODE,
+    }, 200
+
+
 @app.route("/bot", methods=["POST"])
 def bot():
     mensaje   = request.form.get("Body", "").strip()
@@ -1876,6 +1872,47 @@ def bot():
     # Log de mensaje entrante para auditoría y control de consumo.
     # No rompe el flujo si Supabase falla, porque registrar_mensaje_log ya maneja excepciones.
     registrar_mensaje_log(telefono, "entrante", mensaje, "whatsapp")
+
+    # ── ATAJOS DEMO DIRECTOS SOLO PARA DUEÑO ───────────────────
+    # Permite limpiar demo sin tener que entrar primero con "soy demo".
+    if DEMO_MODE and es_dueno(telefono):
+        msg_demo_directo = normalizar(mensaje)
+
+        if msg_demo_directo in ["nuevo cliente demo", "nuevo demo", "reiniciar demo"]:
+            limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=False)
+            demo_sessions[remitente] = False
+            owner_sessions[remitente] = False
+            respuesta_texto = """🧪 Listo. Inicié un *nuevo cliente demo* para este WhatsApp.
+
+Ahora escribe *hola* y el bot pedirá consentimiento desde cero."""
+            registrar_mensaje_log(telefono, "saliente", respuesta_texto, "demo_directo")
+            resp = MessagingResponse()
+            resp.message(respuesta_texto)
+            return Response(str(resp), mimetype="application/xml")
+
+        if msg_demo_directo in ["cliente autorizado demo", "autorizar demo", "demo autorizado"]:
+            limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=True)
+            demo_sessions[remitente] = False
+            owner_sessions[remitente] = False
+            respuesta_texto = """🧪 Listo. Dejé este WhatsApp como *cliente autorizado demo*.
+
+Ahora escribe *hola* y el bot mostrará el menú sin pedir consentimiento."""
+            registrar_mensaje_log(telefono, "saliente", respuesta_texto, "demo_directo")
+            resp = MessagingResponse()
+            resp.message(respuesta_texto)
+            return Response(str(resp), mimetype="application/xml")
+
+        if msg_demo_directo in ["limpiar consentimiento demo", "reset consentimiento demo"]:
+            limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=False)
+            demo_sessions[remitente] = False
+            owner_sessions[remitente] = False
+            respuesta_texto = """🧪 Listo. Limpié consentimiento demo.
+
+Ahora escribe *hola* y el bot pedirá autorización desde cero."""
+            registrar_mensaje_log(telefono, "saliente", respuesta_texto, "demo_directo")
+            resp = MessagingResponse()
+            resp.message(respuesta_texto)
+            return Response(str(resp), mimetype="application/xml")
 
     # ── MODO DEMO SOLO PARA EL DUEÑO ───────────────────────────
     if DEMO_MODE and es_dueno(telefono):
@@ -2010,6 +2047,41 @@ def bot():
             "Por favor envíanos tu nombre y el motivo de la consulta para ayudarte mejor."
         )
         registrar_mensaje_log(telefono, "saliente", respuesta_texto, "humano")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+
+    # ── RESPUESTAS RÁPIDAS SIN IA PARA AHORRAR COSTOS ─────────
+    msg_rapido = normalizar(mensaje)
+
+    if msg_rapido in ["menu", "servicios", "ver servicios", "inicio"]:
+        respuesta_texto = """Claro 😊 Estos son nuestros servicios principales:
+
+1️⃣ Masajes — relajante, descontracturante
+2️⃣ Faciales — hidratación, anti-edad, limpieza
+3️⃣ Depilación — piernas, axilas
+4️⃣ Uñas — manicure clásico y semipermanente
+5️⃣ Pestañas — diseño y lifting
+6️⃣ Cabello — keratina, tinte y corte
+7️⃣ Tratamientos corporales — reductivos
+
+Responde con el número o cuéntame qué buscas 😊"""
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "menu_sin_ia")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+
+    if msg_rapido in ["ayuda", "opciones"]:
+        respuesta_texto = """Puedo ayudarte con:
+
+1️⃣ Ver servicios
+2️⃣ Consultar horarios
+3️⃣ Agendar una cita
+4️⃣ Cancelar o reagendar
+5️⃣ Hablar con una persona
+
+Responde con el número o dime qué necesitas 😊"""
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "ayuda_sin_ia")
         resp = MessagingResponse()
         resp.message(respuesta_texto)
         return Response(str(resp), mimetype="application/xml")
