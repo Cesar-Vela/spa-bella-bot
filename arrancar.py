@@ -2183,6 +2183,65 @@ def menu_servicios_post_optin(reactivacion=False):
 
 
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# V12.6G: MENÚ CLIENTE GUIADO SEGURO
+# ═══════════════════════════════════════════════════════════════
+def categoria_por_opcion_cliente(mensaje):
+    """Resuelve opciones 1-7 del menú cliente sin usar IA."""
+    msg = normalizar(mensaje)
+    mapa = {
+        "1": "masajes",
+        "2": "faciales",
+        "3": "depilacion",
+        "4": "unas",
+        "5": "pestanas",
+        "6": "cabello",
+        "7": "corporales",
+    }
+    return mapa.get(msg)
+
+
+def nombre_categoria_cliente(categoria):
+    nombres = {
+        "masajes": "Masajes",
+        "faciales": "Faciales",
+        "depilacion": "Depilación",
+        "unas": "Uñas",
+        "pestanas": "Pestañas",
+        "cabello": "Cabello",
+        "corporales": "Tratamientos corporales",
+    }
+    return nombres.get(categoria, categoria.title())
+
+
+def respuesta_categoria_cliente(categoria):
+    """Muestra servicios de una categoría de forma fija y ordenada.
+    Esto evita que la IA interprete mal números del menú.
+    """
+    try:
+        resultado = supabase.table("servicios").select("nombre, precio").execute()
+        servicios = resultado.data or []
+        servicios = [s for s in servicios if servicio_pertenece_categoria(s, categoria)]
+        servicios = sorted(servicios, key=lambda s: normalizar(s.get("nombre", "")))
+
+        if not servicios:
+            return (
+                f"Por ahora no encontré servicios cargados en *{nombre_categoria_cliente(categoria)}*.\n\n"
+                "Puedes escribirme el servicio que buscas o pedir atención del equipo 😊"
+            )
+
+        lineas = [f"Perfecto 🌸 En *{nombre_categoria_cliente(categoria)}* tenemos:\n"]
+        for i, s in enumerate(servicios, 1):
+            lineas.append(f"{i}️⃣ {s.get('nombre')} — {formatear_precio(s.get('precio'))}")
+
+        lineas.append("\nResponde con el número o escribe el servicio que quieres agendar 😊")
+        return "\n".join(lineas)
+    except Exception as e:
+        print(f"❌ ERROR respuesta_categoria_cliente: {e}")
+        return "Tuve un inconveniente consultando esa categoría 😊 ¿Puedes escribir el nombre del servicio que buscas?"
+
 def es_comando_redes(mensaje):
     """Detecta solicitud de redes sociales, ubicación o links comerciales."""
     msg = normalizar(mensaje)
@@ -2437,6 +2496,14 @@ def bot():
             "Por favor envíanos tu nombre y el motivo de la consulta para ayudarte mejor."
         )
         registrar_mensaje_log(telefono, "saliente", respuesta_texto, "humano")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+
+    categoria_cliente = categoria_por_opcion_cliente(mensaje)
+    if categoria_cliente:
+        respuesta_texto = respuesta_categoria_cliente(categoria_cliente)
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "categoria_cliente_guiada")
         resp = MessagingResponse()
         resp.message(respuesta_texto)
         return Response(str(resp), mimetype="application/xml")
