@@ -25,22 +25,17 @@ user_history = {}
 # Estado simple para saber si el dueño activó el panel privado con "soy dueño".
 owner_sessions = {}
 
+# V12.6A: estados guiados del panel dueño (bloquear/liberar/consultar por pasos)
+owner_workflows = {}
+
 # Modo demo: útil para presentaciones desde un solo WhatsApp.
 # En producción real déjalo en false o no configures esta variable.
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in ["1", "true", "yes", "si", "sí"]
 demo_sessions = {}
 
-# V12.6C: flujo guiado de fechas para clientes en demo/operación.
-# Evita confusiones cuando el cliente escribe fechas largas como "26 de mayo".
+# V12.6C/V12.6D: estados guiados para clientes y demo limpia.
 client_workflows = {}
-
-# Enlaces comerciales configurables por variables de entorno.
-SPA_INSTAGRAM = os.getenv("SPA_INSTAGRAM", "").strip()
-SPA_FACEBOOK = os.getenv("SPA_FACEBOOK", "").strip()
-SPA_TIKTOK = os.getenv("SPA_TIKTOK", "").strip()
-SPA_MAPS = os.getenv("SPA_MAPS", "").strip()
-SPA_WHATSAPP_LINK = os.getenv("SPA_WHATSAPP_LINK", "").strip()
-
+demo_clean_starts = set()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -57,29 +52,26 @@ def es_dueno(telefono):
 
 
 def menu_dueno():
-    """Menú privado que se muestra cuando el dueño escribe: soy dueño."""
+    """Menú privado guiado para el dueño."""
     return """👑 *Modo Dueño activado*
 
-Puedes consultar respondiendo con el número o escribiendo el comando:
+Responde con el número de la opción:
 
-1️⃣ 📅 *Agenda de hoy* — citas del día
-2️⃣ 📅 *Agenda de mañana* — citas de mañana
-3️⃣ 📅 *Agenda del viernes* — citas de un día específico
-4️⃣ 📊 *Semana* — próximas citas de 7 días
-5️⃣ 💰 *Ingresos de hoy* — ventas confirmadas del día
-6️⃣ 💰 *Ingresos semana* — ventas confirmadas de 7 días
-7️⃣ 📌 *Resumen* — agenda + ingresos de hoy
-8️⃣ 🔎 *Buscar cliente/cita* — ejemplo: buscar Oscar
-9️⃣ 🧾 *Historial de cambios* — últimas cancelaciones/reagendadas
-🔒 *Bloquear horario* — ejemplo: bloquear viernes 15:00 reunión personal
-🔓 *Liberar horario* — ejemplo: liberar viernes 15:00
-📋 *Ver bloqueos* — muestra horarios bloqueados activos
-0️⃣ 🚪 *Salir* — volver al modo cliente
+1️⃣ 📅 *Agenda de hoy*
+2️⃣ 📅 *Agenda de mañana*
+3️⃣ 📅 *Agenda de un día específico*
+4️⃣ 📊 *Semana*
+5️⃣ 💰 *Ingresos de hoy*
+6️⃣ 💰 *Ingresos semana*
+7️⃣ 📌 *Resumen*
+8️⃣ 🔎 *Buscar cliente/cita*
+9️⃣ 🧾 *Historial de cambios*
+🔟 🔒 *Bloquear horario*
+1️⃣1️⃣ 🔓 *Liberar horario*
+1️⃣2️⃣ 📋 *Ver bloqueos*
+0️⃣ 🚪 *Salir*
 
-Ejemplo: responde *1* para ver la agenda de hoy.
-También puedes escribir: *buscar Oscar*, *historial Oscar*, *bloquear viernes 15:00* o *ver bloqueos*.
-Escribe *salir* para volver al modo cliente 😊"""
-
+Para funciones operativas usa números. Así evitamos errores por palabras mal escritas 😊"""
 
 
 def menu_demo():
@@ -114,20 +106,25 @@ def es_salida_modo_demo(mensaje):
 
 def limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autorizar=False):
     """Limpia estado de demo solo para el número actual.
-    V12.6C: reinicio fuerte y seguro para poder mostrar la demo desde cero.
+    V12.6D: reinicio fuerte y seguro para poder mostrar la demo desde cero.
     No borra citas reales ni datos de otros clientes.
     """
     try:
         # Memoria local del bot
         user_history.pop(remitente, None)
         owner_sessions.pop(remitente, None)
-        owner_workflows.pop(remitente, None)
+        demo_sessions.pop(remitente, None)
         client_workflows.pop(remitente, None)
 
-        telefono_limpio = limpiar_telefono_cliente(telefono)
-        cliente = buscar_cliente(telefono=telefono_limpio)
+        # Marca arranque limpio: después de aceptar consentimiento no debe retomar historial viejo.
+        demo_clean_starts.add(remitente)
 
-        if cliente and limpiar_consentimiento:
+        telefono_limpio = limpiar_telefono_cliente(telefono)
+        posibles_telefonos = list({telefono_limpio, f"+{telefono_limpio}" if telefono_limpio else ""})
+        posibles_telefonos = [t for t in posibles_telefonos if t]
+
+        clientes_actualizados = 0
+        if limpiar_consentimiento:
             datos = {
                 "whatsapp_opt_in": bool(autorizar),
                 "opt_in_fecha": datetime.now().isoformat() if autorizar else None,
@@ -135,9 +132,12 @@ def limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autori
                 "no_contactar": False,
                 "no_contactar_fecha": None,
             }
-            # Solo limpiamos campos de autorización/contacto. No borramos citas ni historial de negocio.
-            supabase.table("clientes").update(datos).eq("id", cliente["id"]).execute()
-        elif not cliente and autorizar:
+            # Actualiza todos los duplicados del mismo número, con y sin +.
+            for tel in posibles_telefonos:
+                res = supabase.table("clientes").update(datos).eq("telefono", tel).execute()
+                clientes_actualizados += len(res.data or [])
+
+        if autorizar and clientes_actualizados == 0:
             supabase.table("clientes").insert({
                 "nombre": "Cliente Demo",
                 "telefono": telefono_limpio,
@@ -152,6 +152,7 @@ def limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autori
     except Exception as e:
         print("⚠️ No se pudo limpiar estado demo:", e)
         return False
+
 
 def procesar_comando_demo(mensaje, telefono, remitente):
     msg = normalizar(mensaje)
@@ -190,16 +191,6 @@ def procesar_comando_demo(mensaje, telefono, remitente):
 
     return menu_demo()
 
-
-def es_comando_demo_global(mensaje):
-    """Comandos de demo que deben funcionar aunque no estés dentro del menú demo."""
-    msg = normalizar(mensaje)
-    return msg in [
-        "nuevo cliente demo", "nuevo demo", "reiniciar demo",
-        "limpiar consentimiento demo", "reset consentimiento", "limpiar historial demo"
-    ]
-
-
 def es_entrada_modo_dueno(mensaje):
     """Palabra/frase exacta para abrir el panel del dueño sin afectar el modo cliente."""
     msg = normalizar(mensaje)
@@ -207,9 +198,9 @@ def es_entrada_modo_dueno(mensaje):
 
 
 def es_salida_modo_dueno(mensaje):
-    """Permite volver al flujo comercial de Valentina con el mismo celular."""
+    """Permite volver al flujo comercial sin salir por error al escribir 'buscar cliente'."""
     msg = normalizar(mensaje)
-    return any(p in msg for p in ["salir", "salir modo dueno", "modo cliente", "cliente", "valentina"])
+    return msg in ["0", "salir", "salir modo dueno", "salir modo dueño", "modo cliente", "volver", "valentina"]
 
 
 def es_comando_dueno(mensaje):
@@ -335,9 +326,16 @@ def marcar_opt_in(telefono, texto="SI ACEPTO"):
             "no_contactar_fecha": None,
         }
 
-        if cliente:
-            supabase.table("clientes").update(datos).eq("id", cliente["id"]).execute()
-        else:
+        # V12.6D: actualiza todos los registros duplicados del mismo WhatsApp,
+        # tanto con + como sin +, para que el consentimiento quede estable.
+        posibles_telefonos = list({telefono_limpio, f"+{telefono_limpio}" if telefono_limpio else ""})
+        posibles_telefonos = [t for t in posibles_telefonos if t]
+        actualizados = 0
+        for tel in posibles_telefonos:
+            res = supabase.table("clientes").update(datos).eq("telefono", tel).execute()
+            actualizados += len(res.data or [])
+
+        if actualizados == 0:
             datos.update({"nombre": "Cliente WhatsApp", "telefono": telefono_limpio})
             supabase.table("clientes").insert(datos).execute()
 
@@ -539,21 +537,339 @@ def resumen_dueno():
         print(f"ERROR resumen dueño: {e}")
         return "No pude generar el resumen del dueño en este momento 😊"
 
-def procesar_comando_dueno(mensaje):
-    """Procesa comandos del dueño y devuelve respuesta."""
+def fecha_corta_texto(fecha_str):
+    try:
+        dt = datetime.strptime(fecha_str, "%Y-%m-%d")
+        dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+        return f"{dias[dt.weekday()].capitalize()} {dt.day} de {meses[dt.month-1]}"
+    except Exception:
+        return fecha_str
+
+
+def dia_semana_fecha(fecha_str):
+    try:
+        dt = datetime.strptime(fecha_str, "%Y-%m-%d")
+        return DIAS_ES.get(dt.strftime("%A").lower(), "")
+    except Exception:
+        return ""
+
+
+def proximo_dia(nombre_dia):
+    dias_semana_idx = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+    hoy = datetime.now()
+    diff = (dias_semana_idx.index(nombre_dia) - hoy.weekday()) % 7 or 7
+    return (hoy + timedelta(days=diff)).strftime("%Y-%m-%d")
+
+
+def opciones_dias_dueno():
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    manana = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    viernes = proximo_dia("viernes")
+    sabado = proximo_dia("sabado")
+    return [
+        ("1", hoy, "Hoy"),
+        ("2", manana, "Mañana"),
+        ("3", viernes, fecha_corta_texto(viernes)),
+        ("4", sabado, fecha_corta_texto(sabado)),
+    ]
+
+
+def menu_dias_bloqueo():
+    lineas = ["🔒 *¿Qué día quieres bloquear?*\n"]
+    for n, fecha, etiqueta in opciones_dias_dueno():
+        lineas.append(f"{n}️⃣ {etiqueta} — {fecha}")
+    lineas.append("5️⃣ Escribir otra fecha")
+    lineas.append("0️⃣ Cancelar")
+    return "\n".join(lineas)
+
+
+def menu_dias_agenda():
+    lineas = ["📅 *¿Qué día quieres consultar?*\n"]
+    for n, fecha, etiqueta in opciones_dias_dueno():
+        lineas.append(f"{n}️⃣ {etiqueta} — {fecha}")
+    lineas.append("5️⃣ Escribir otra fecha")
+    lineas.append("0️⃣ Cancelar")
+    return "\n".join(lineas)
+
+
+def menu_horas_bloqueo(fecha):
+    dia = dia_semana_fecha(fecha)
+    horarios = HORARIOS_DISPONIBLES.get(dia, [])
+    if not horarios:
+        return f"🔒 No tengo horarios configurados para {fecha_corta_texto(fecha)}."
+
+    lineas = [f"🔒 *¿Qué horario deseas bloquear para {fecha_corta_texto(fecha)}?*\n"]
+    for i, h in enumerate(horarios, start=1):
+        lineas.append(f"{i}️⃣ {h}")
+    lineas.append(f"{len(horarios)+1}️⃣ Bloquear varias horas")
+    lineas.append(f"{len(horarios)+2}️⃣ Bloquear todo el día")
+    lineas.append("0️⃣ Cancelar")
+    return "\n".join(lineas)
+
+
+def confirmar_bloqueo_texto(fecha, horas):
+    lineas = [f"Vas a bloquear:\n\n📅 {fecha_corta_texto(fecha)}"]
+    for h in horas:
+        lineas.append(f"🔒 {h}")
+    lineas.append("\n¿Confirmas?\n\n1️⃣ Sí, bloquear\n2️⃣ No, cancelar")
+    return "\n".join(lineas)
+
+
+def guardar_bloqueos_directo(fecha, horas, motivo, telefono):
+    creados = []
+    repetidos = []
+    errores = []
+
+    for hora in horas:
+        valida = validar_fecha_hora_futura(fecha, hora)
+        if valida.get("error"):
+            errores.append(f"{hora}: {valida['error']}")
+            continue
+
+        try:
+            existe = supabase.table("bloqueos_agenda").select("id") \
+                .eq("fecha", fecha).eq("hora", hora).eq("activo", True).execute()
+            if existe.data:
+                repetidos.append(hora)
+                continue
+
+            supabase.table("bloqueos_agenda").insert({
+                "fecha": fecha,
+                "hora": hora,
+                "motivo": motivo,
+                "creado_por": limpiar_telefono_cliente(telefono),
+                "activo": True,
+            }).execute()
+            creados.append(hora)
+        except Exception as e:
+            print("ERROR bloqueo guiado:", e)
+            errores.append(f"{hora}: error interno")
+
+    lineas = []
+    if creados:
+        lineas.append(f"✅ *Bloqueos creados para {fecha_corta_texto(fecha)}*")
+        for h in creados:
+            lineas.append(f"🔒 {h}")
+
+    if repetidos:
+        lineas.append("\n⚠️ Ya estaban bloqueados:")
+        for h in repetidos:
+            lineas.append(f"• {h}")
+
+    if errores:
+        lineas.append("\n❌ No pude bloquear:")
+        for e in errores:
+            lineas.append(f"• {e}")
+
+    if not lineas:
+        return "No pude crear ningún bloqueo."
+
+    lineas.append("\nEstos horarios ya no aparecerán disponibles para clientes.")
+    return "\n".join(lineas)
+
+
+def obtener_bloqueos_activos():
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    res = supabase.table("bloqueos_agenda").select("id, fecha, hora, motivo, created_at") \
+        .gte("fecha", hoy).eq("activo", True).order("fecha").limit(30).execute()
+    return res.data or []
+
+
+def menu_liberar_bloqueos(remitente):
+    datos = obtener_bloqueos_activos()
+    if not datos:
+        owner_workflows.pop(remitente, None)
+        return "📋 No hay bloqueos activos próximos."
+
+    owner_workflows[remitente] = {"accion": "liberar_seleccionar", "bloqueos": datos}
+    lineas = ["🔓 *¿Qué bloqueo deseas liberar?*\n"]
+    for i, b in enumerate(datos, start=1):
+        hora = str(b.get("hora", ""))[:5]
+        motivo = b.get("motivo") or "Sin motivo"
+        lineas.append(f"{i}️⃣ {b.get('fecha')} {hora} — {motivo}")
+    lineas.append("\n0️⃣ Cancelar")
+    return "\n".join(lineas)
+
+
+def procesar_flujo_dueno_guiado(mensaje, remitente, telefono):
+    estado = owner_workflows.get(remitente)
+    if not estado:
+        return None
+
     msg = normalizar(mensaje)
 
-    # Bloqueos de agenda del dueño
-    if msg.startswith("bloquear"):
-        return bloquear_horario_dueno(mensaje, OWNER_PHONE)
+    if msg in ["0", "cancelar", "salir"]:
+        owner_workflows.pop(remitente, None)
+        return "Operación cancelada.\n\n" + menu_dueno()
 
-    if msg.startswith("liberar"):
-        return liberar_horario_dueno(mensaje)
+    accion = estado.get("accion")
 
-    if any(p in msg for p in ["ver bloqueos", "bloqueos", "horarios bloqueados"]):
-        return ver_bloqueos_dueno()
+    if accion == "agenda_dia":
+        if msg == "5":
+            owner_workflows[remitente] = {"accion": "agenda_otra_fecha"}
+            return "📅 Escribe la fecha o día que quieres consultar.\nEjemplo: *viernes* o *2026-05-15*"
+        opciones = {n: fecha for n, fecha, _ in opciones_dias_dueno()}
+        if msg in opciones:
+            owner_workflows.pop(remitente, None)
+            return agenda_del_dia(opciones[msg])
+        return menu_dias_agenda()
 
-    # También acepta números del menú privado.
+    if accion == "agenda_otra_fecha":
+        fecha, _ = interpretar_fecha(mensaje)
+        if not fecha:
+            return "No entendí la fecha. Escribe algo como *viernes* o *2026-05-15*."
+        owner_workflows.pop(remitente, None)
+        return agenda_del_dia(fecha)
+
+    if accion == "buscar_cliente":
+        owner_workflows.pop(remitente, None)
+        return buscar_citas_texto(mensaje)
+
+    if accion == "bloquear_dia":
+        if msg == "5":
+            owner_workflows[remitente] = {"accion": "bloquear_otra_fecha"}
+            return "🔒 Escribe la fecha o día que quieres bloquear.\nEjemplo: *viernes* o *2026-05-15*"
+        opciones = {n: fecha for n, fecha, _ in opciones_dias_dueno()}
+        if msg in opciones:
+            fecha = opciones[msg]
+            owner_workflows[remitente] = {"accion": "bloquear_hora", "fecha": fecha}
+            return menu_horas_bloqueo(fecha)
+        return menu_dias_bloqueo()
+
+    if accion == "bloquear_otra_fecha":
+        fecha, _ = interpretar_fecha(mensaje)
+        if not fecha:
+            return "No entendí la fecha. Escribe algo como *viernes* o *2026-05-15*."
+        owner_workflows[remitente] = {"accion": "bloquear_hora", "fecha": fecha}
+        return menu_horas_bloqueo(fecha)
+
+    if accion == "bloquear_hora":
+        fecha = estado["fecha"]
+        dia = dia_semana_fecha(fecha)
+        horarios = HORARIOS_DISPONIBLES.get(dia, [])
+        if not horarios:
+            owner_workflows.pop(remitente, None)
+            return f"No hay horarios configurados para {fecha_corta_texto(fecha)}."
+
+        opcion_varias = str(len(horarios) + 1)
+        opcion_todo = str(len(horarios) + 2)
+
+        if msg == opcion_varias:
+            owner_workflows[remitente] = {"accion": "bloquear_varias", "fecha": fecha, "horarios": horarios}
+            lineas = ["Escribe los números de las horas separados por coma.\nEjemplo: *2,3,4*\n"]
+            for i, h in enumerate(horarios, start=1):
+                lineas.append(f"{i}️⃣ {h}")
+            lineas.append("\n0️⃣ Cancelar")
+            return "\n".join(lineas)
+
+        if msg == opcion_todo:
+            owner_workflows[remitente] = {
+                "accion": "confirmar_bloqueo",
+                "fecha": fecha,
+                "horas": horarios,
+                "motivo": "Bloqueo día completo"
+            }
+            return confirmar_bloqueo_texto(fecha, horarios)
+
+        if msg.isdigit() and 1 <= int(msg) <= len(horarios):
+            hora = horarios[int(msg) - 1]
+            owner_workflows[remitente] = {
+                "accion": "confirmar_bloqueo",
+                "fecha": fecha,
+                "horas": [hora],
+                "motivo": "Bloqueo desde panel dueño"
+            }
+            return confirmar_bloqueo_texto(fecha, [hora])
+
+        return menu_horas_bloqueo(fecha)
+
+    if accion == "bloquear_varias":
+        fecha = estado["fecha"]
+        horarios = estado["horarios"]
+        try:
+            nums = [int(x.strip()) for x in msg.replace(" ", "").split(",") if x.strip()]
+            horas = [horarios[n - 1] for n in nums if 1 <= n <= len(horarios)]
+        except Exception:
+            horas = []
+
+        if not horas:
+            return "No entendí las horas. Escribe números separados por coma. Ejemplo: *2,3,4*"
+
+        owner_workflows[remitente] = {
+            "accion": "confirmar_bloqueo",
+            "fecha": fecha,
+            "horas": horas,
+            "motivo": "Bloqueo múltiple desde panel dueño"
+        }
+        return confirmar_bloqueo_texto(fecha, horas)
+
+    if accion == "confirmar_bloqueo":
+        if msg in ["1", "si", "sí", "si bloquear", "confirmo", "confirmar"]:
+            fecha = estado["fecha"]
+            horas = estado["horas"]
+            motivo = estado.get("motivo", "Bloqueo desde panel dueño")
+            owner_workflows.pop(remitente, None)
+            return guardar_bloqueos_directo(fecha, horas, motivo, telefono)
+
+        if msg in ["2", "no", "cancelar"]:
+            owner_workflows.pop(remitente, None)
+            return "Bloqueo cancelado.\n\n" + menu_dueno()
+
+        return "Responde *1* para confirmar o *2* para cancelar."
+
+    if accion == "liberar_seleccionar":
+        bloqueos = estado.get("bloqueos", [])
+        if msg.isdigit() and 1 <= int(msg) <= len(bloqueos):
+            b = bloqueos[int(msg) - 1]
+            owner_workflows[remitente] = {"accion": "confirmar_liberar", "bloqueo": b}
+            hora = str(b.get("hora", ""))[:5]
+            motivo = b.get("motivo") or "Sin motivo"
+            return (
+                "Vas a liberar:\n\n"
+                f"📅 {b.get('fecha')}\n"
+                f"🕒 {hora}\n"
+                f"📝 {motivo}\n\n"
+                "¿Confirmas?\n\n"
+                "1️⃣ Sí, liberar\n"
+                "2️⃣ No, cancelar"
+            )
+        return menu_liberar_bloqueos(remitente)
+
+    if accion == "confirmar_liberar":
+        b = estado["bloqueo"]
+        if msg in ["1", "si", "sí", "si liberar", "confirmo", "confirmar"]:
+            try:
+                supabase.table("bloqueos_agenda").update({"activo": False}).eq("id", b["id"]).execute()
+                owner_workflows.pop(remitente, None)
+                return f"✅ Listo. Liberé el {b.get('fecha')} a las {str(b.get('hora'))[:5]}."
+            except Exception as e:
+                print("ERROR liberar guiado:", e)
+                owner_workflows.pop(remitente, None)
+                return "No pude liberar ese horario en este momento."
+
+        if msg in ["2", "no", "cancelar"]:
+            owner_workflows.pop(remitente, None)
+            return "Liberación cancelada.\n\n" + menu_dueno()
+
+        return "Responde *1* para confirmar o *2* para cancelar."
+
+    owner_workflows.pop(remitente, None)
+    return menu_dueno()
+
+
+def procesar_comando_dueno(mensaje, remitente=None, telefono=None):
+    """Procesa comandos del dueño con panel guiado y fallback seguro."""
+    msg = normalizar(mensaje)
+
+    if remitente:
+        respuesta_flujo = procesar_flujo_dueno_guiado(mensaje, remitente, telefono or OWNER_PHONE)
+        if respuesta_flujo is not None:
+            return respuesta_flujo
+
+    if es_entrada_modo_dueno(msg) or msg in ["menu", "ayuda", "comandos", "opciones"]:
+        return menu_dueno()
+
     if msg in ["1", "01", "uno"]:
         return agenda_del_dia()
 
@@ -562,11 +878,9 @@ def procesar_comando_dueno(mensaje):
         return agenda_del_dia(manana)
 
     if msg in ["3", "03", "tres"]:
-        hoy = datetime.now()
-        dias_semana_idx = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
-        diff = (dias_semana_idx.index("viernes") - hoy.weekday()) % 7 or 7
-        fecha = (hoy + timedelta(days=diff)).strftime("%Y-%m-%d")
-        return agenda_del_dia(fecha)
+        if remitente:
+            owner_workflows[remitente] = {"accion": "agenda_dia"}
+        return menu_dias_agenda()
 
     if msg in ["4", "04", "cuatro"]:
         return resumen_semana()
@@ -581,66 +895,68 @@ def procesar_comando_dueno(mensaje):
         return resumen_dueno()
 
     if msg in ["8", "08", "ocho"]:
-        return "🔎 Para buscar escribe: *buscar Nombre*\nEjemplo: *buscar Oscar*"
+        if remitente:
+            owner_workflows[remitente] = {"accion": "buscar_cliente"}
+        return "🔎 Escribe el nombre o parte del nombre del cliente.\nEjemplo: *Oscar*"
 
     if msg in ["9", "09", "nueve"]:
         return historial_citas_texto()
 
+    if msg in ["10", "010", "diez"] or msg in ["bloquear horario", "bloquear"]:
+        if remitente:
+            owner_workflows[remitente] = {"accion": "bloquear_dia"}
+        return menu_dias_bloqueo()
+
+    if msg in ["11", "011", "once"] or msg in ["liberar horario", "liberar"]:
+        if remitente:
+            return menu_liberar_bloqueos(remitente)
+        return "🔓 Para liberar escribe: *liberar viernes 15:00*"
+
+    if msg in ["12", "012", "doce"] or msg in ["ver bloqueos", "bloqueos", "horarios bloqueados"]:
+        return ver_bloqueos_dueno()
+
     if msg in ["0", "00", "cero"]:
         return "Escribe *salir* para volver al modo cliente 😊"
 
-    # Buscar cliente/cita
+    # Compatibilidad con comandos escritos completos
+    if msg.startswith("bloquear "):
+        return bloquear_horario_dueno(mensaje, telefono or OWNER_PHONE)
+
+    if msg.startswith("liberar "):
+        return liberar_horario_dueno(mensaje)
+
     if msg.startswith("buscar ") or msg.startswith("cliente ") or msg.startswith("cita de "):
         termino = msg.replace("buscar ", "", 1).replace("cliente ", "", 1).replace("cita de ", "", 1).strip()
         return buscar_citas_texto(termino)
 
-    # Historial de cambios
     if msg.startswith("historial "):
         termino = msg.replace("historial ", "", 1).strip()
         return historial_citas_texto(termino)
 
-    if any(p in msg for p in ["historial", "cambios", "reagendadas", "canceladas"]):
-        return historial_citas_texto()
-
-    # Agenda de hoy
     if any(p in msg for p in ["agenda de hoy", "agenda hoy", "citas de hoy", "que hay hoy"]):
         return agenda_del_dia()
 
-    # Agenda de mañana
     if any(p in msg for p in ["agenda de manana", "agenda manana", "citas de manana"]):
         manana = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
         return agenda_del_dia(manana)
 
-    # Agenda de un día específico
-    if "agenda del" in msg or "citas del" in msg or "agenda" in msg or "citas" in msg:
-        dias_semana_idx = ["lunes","martes","miercoles","jueves","viernes","sabado","domingo"]
-        hoy = datetime.now()
-        for dia in dias_semana_idx:
-            if dia in msg:
-                diff = (dias_semana_idx.index(dia) - hoy.weekday()) % 7 or 7
-                fecha = (hoy + timedelta(days=diff)).strftime("%Y-%m-%d")
-                return agenda_del_dia(fecha)
-
-    # Resumen semanal
     if any(p in msg for p in ["semana", "esta semana", "proximas citas", "próximas citas"]):
         return resumen_semana()
 
-    # Ingresos
     if any(p in msg for p in ["ingresos de hoy", "ventas de hoy", "ingreso hoy", "venta hoy"]):
         return ingresos_periodo(0)
 
     if any(p in msg for p in ["ingresos semana", "ingresos de la semana", "ventas semana", "ventas de la semana"]):
         return ingresos_periodo(7)
 
-    # Resumen rápido
     if any(p in msg for p in ["resumen", "reporte", "dashboard", "panel"]):
         return resumen_dueno()
 
-    # Menú / ayuda
-    if es_entrada_modo_dueno(msg) or any(p in msg for p in ["ayuda", "comandos", "que puedes hacer", "menu"]):
-        return menu_dueno()
-
-    return menu_dueno()  # Si llegó al modo dueño pero no entendió, mostramos opciones
+    return (
+        "No entendí esa opción en modo dueño.\n\n"
+        "Responde con un número del menú o escribe *0* para salir.\n\n"
+        + menu_dueno()
+    )
 
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE HORARIOS
@@ -788,15 +1104,6 @@ CUMPLIMIENTO WHATSAPP:
 - El sistema ya valida el consentimiento antes de mostrar servicios o confirmar citas.
 - Si una herramienta indica que el cliente ya autorizó, NO vuelvas a pedir autorización.
 - Si recibes un mensaje interno que dice que el cliente ya autorizó, retoma la cita pendiente automáticamente.
-
-FECHAS Y AGENDAMIENTO GUIADO — V12.6C:
-- Cuando el cliente quiera agendar pero la fecha no sea clara, guíalo con opciones: hoy, mañana, viernes, sábado o fecha exacta.
-- Para fecha exacta, pide SIEMPRE este formato principal: AAAA-MM-DD. Ejemplo: 2026-05-26.
-- Si el cliente escribe una fecha larga como "26 de mayo" o "lunes 26 de mayo", confirma la fecha exacta antes de guardar.
-- Nunca inventes el año. Usa la fecha actual del sistema como referencia.
-
-REDES SOCIALES Y UBICACIÓN:
-- Si el cliente pide redes, Instagram, Facebook, ubicación, dirección o cómo llegar, responde con los enlaces disponibles o la dirección.
 
 OBJETIVO: Entender qué busca el cliente, recomendarle lo mejor, y llevarlo a agendar.
 Nunca dejes la conversación sin una invitación a continuar.
@@ -979,79 +1286,27 @@ def servicio_pertenece_categoria(servicio, categoria):
     return fn(n) if fn else False
 
 
-MESES_ES = {
-    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
-    "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
-    "noviembre": 11, "diciembre": 12,
-}
-
-
 def interpretar_fecha(texto):
-    """Interpreta fechas de forma segura.
-    V12.6C: acepta formatos exactos y fechas largas:
-    - 2026-05-26
-    - 26/05/2026
-    - 26-05-2026
-    - 26 de mayo
-    - lunes 26 de mayo
-    Si no se indica año, usa el año actual o el siguiente si esa fecha ya pasó.
-    """
-    texto_original = texto or ""
-    texto_n = normalizar(texto_original)
+    texto_n = normalizar(texto)
     hoy = datetime.now()
     dias = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
 
-    # 1) Formato ISO recomendado para evitar confusiones.
-    m_iso = re.search(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b", texto_n)
-    if m_iso:
-        try:
-            fecha = datetime(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3)))
-            return fecha.strftime("%Y-%m-%d"), DIAS_ES.get(fecha.strftime("%A").lower(), "")
-        except Exception:
-            return None, None
-
-    # 2) Formato latino: 26/05/2026 o 26-05-2026.
-    m_lat = re.search(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](20\d{2}))?\b", texto_n)
-    if m_lat:
-        try:
-            dia_num = int(m_lat.group(1))
-            mes_num = int(m_lat.group(2))
-            anio = int(m_lat.group(3)) if m_lat.group(3) else hoy.year
-            fecha = datetime(anio, mes_num, dia_num)
-            if not m_lat.group(3) and fecha.date() < hoy.date():
-                fecha = datetime(anio + 1, mes_num, dia_num)
-            return fecha.strftime("%Y-%m-%d"), DIAS_ES.get(fecha.strftime("%A").lower(), "")
-        except Exception:
-            return None, None
-
-    # 3) Fechas escritas: 26 de mayo, lunes 26 de mayo, 26 mayo 2026.
-    meses_patron = "|".join(MESES_ES.keys())
-    m_texto = re.search(rf"\b(\d{{1,2}})\s*(?:de\s*)?({meses_patron})(?:\s*(?:de\s*)?(20\d{{2}}))?\b", texto_n)
-    if m_texto:
-        try:
-            dia_num = int(m_texto.group(1))
-            mes_num = MESES_ES[m_texto.group(2)]
-            anio = int(m_texto.group(3)) if m_texto.group(3) else hoy.year
-            fecha = datetime(anio, mes_num, dia_num)
-            if not m_texto.group(3) and fecha.date() < hoy.date():
-                fecha = datetime(anio + 1, mes_num, dia_num)
-            return fecha.strftime("%Y-%m-%d"), DIAS_ES.get(fecha.strftime("%A").lower(), "")
-        except Exception:
-            return None, None
-
     if "hoy" in texto_n:
         return hoy.strftime("%Y-%m-%d"), DIAS_ES.get(hoy.strftime("%A").lower(), "")
-    if "manana" in texto_n or "mañana" in texto_original.lower():
+    if "manana" in texto_n or "mañana" in texto:
         manana = hoy + timedelta(days=1)
         return manana.strftime("%Y-%m-%d"), DIAS_ES.get(manana.strftime("%A").lower(), "")
-
     for dia in dias:
         if dia in texto_n:
             diff = (dias.index(dia) - hoy.weekday()) % 7 or 7
             fecha = hoy + timedelta(days=diff)
             return fecha.strftime("%Y-%m-%d"), dia
+    try:
+        fecha = datetime.strptime(texto_n, "%Y-%m-%d")
+        return fecha.strftime("%Y-%m-%d"), DIAS_ES.get(fecha.strftime("%A").lower(), "")
+    except Exception:
+        return None, None
 
-    return None, None
 
 
 def limpiar_telefono_cliente(numero):
@@ -1222,17 +1477,23 @@ def registrar_historial(cita_id=None, cliente_id=None, accion="", fecha_anterior
 
 
 def buscar_cliente(nombre_cliente=None, telefono=None):
-    """Busca un cliente por teléfono o por parte del nombre."""
+    """Busca un cliente por teléfono o por parte del nombre.
+    V12.6D: si existen duplicados con el mismo número, prioriza el registro autorizado
+    para evitar que el bot vuelva a pedir consentimiento por error.
+    """
     telefono_limpio = limpiar_telefono_cliente(telefono)
     try:
         if telefono_limpio:
-            res = supabase.table("clientes").select("*").eq("telefono", telefono_limpio).execute()
-            if res.data:
-                return res.data[0]
-            # Compatibilidad con números guardados con +
-            res = supabase.table("clientes").select("*").eq("telefono", "+" + telefono_limpio).execute()
-            if res.data:
-                return res.data[0]
+            posibles_telefonos = list({telefono_limpio, "+" + telefono_limpio})
+            encontrados = []
+            for tel in posibles_telefonos:
+                res = supabase.table("clientes").select("*").eq("telefono", tel).execute()
+                encontrados.extend(res.data or [])
+
+            if encontrados:
+                autorizados = [c for c in encontrados if c.get("whatsapp_opt_in") and not c.get("no_contactar")]
+                return (autorizados or encontrados)[0]
+
         if nombre_cliente:
             res = supabase.table("clientes").select("*").ilike("nombre", f"%{nombre_cliente}%").execute()
             if res.data:
@@ -1898,127 +2159,6 @@ def responder(mensaje_usuario, historial, telefono):
     return texto_final, mensaje_usuario
 
 
-
-def opciones_dias_cliente():
-    hoy = datetime.now().strftime("%Y-%m-%d")
-    manana = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    viernes = proximo_dia("viernes")
-    sabado = proximo_dia("sabado")
-    return [
-        ("1", hoy, "Hoy"),
-        ("2", manana, "Mañana"),
-        ("3", viernes, fecha_corta_texto(viernes)),
-        ("4", sabado, fecha_corta_texto(sabado)),
-    ]
-
-
-def menu_fechas_cliente():
-    lineas = ["📅 *¿Para qué día te gustaría agendar?*\n"]
-    for n, fecha, etiqueta in opciones_dias_cliente():
-        lineas.append(f"{n}️⃣ {etiqueta} — {fecha}")
-    lineas.append("5️⃣ Escribir fecha exacta")
-    lineas.append("0️⃣ Cancelar")
-    lineas.append("\nPara fecha exacta usa este formato: *AAAA-MM-DD*")
-    lineas.append("Ejemplo: *2026-05-26*")
-    return "\n".join(lineas)
-
-
-def es_solicitud_fechas_guiadas(mensaje):
-    msg = normalizar(mensaje)
-    frases = [
-        "quiero agendar", "agendar", "reservar", "quiero una cita", "quiero cita",
-        "ver horarios", "dime los horarios", "horarios disponibles", "que horarios", "qué horarios"
-    ]
-    return any(f in msg for f in frases)
-
-
-def procesar_flujo_cliente_guiado(mensaje, remitente, telefono):
-    estado = client_workflows.get(remitente)
-    if not estado:
-        return None
-
-    msg = normalizar(mensaje)
-    historial = user_history.get(remitente, [])
-
-    if msg in ["0", "cancelar", "salir"]:
-        client_workflows.pop(remitente, None)
-        return "Listo 😊 Cancelé la selección de fecha. ¿Qué te gustaría hacer ahora?"
-
-    accion = estado.get("accion")
-
-    if accion == "elegir_fecha_agenda":
-        if msg == "5":
-            client_workflows[remitente] = {"accion": "fecha_exacta_agenda"}
-            return (
-                "📅 Escribe la fecha exacta en este formato:\n\n"
-                "*AAAA-MM-DD*\n\n"
-                "Ejemplo: *2026-05-26*"
-            )
-
-        opciones = {n: fecha for n, fecha, _ in opciones_dias_cliente()}
-        if msg in opciones:
-            fecha = opciones[msg]
-            client_workflows.pop(remitente, None)
-            texto_para_ia = f"Quiero agendar para la fecha exacta {fecha}. Muéstrame horarios disponibles para esa fecha."
-            respuesta_texto, msg_usuario = responder(texto_para_ia, historial, telefono)
-            user_history[remitente] = (historial + [
-                {"role": "user", "content": mensaje},
-                {"role": "assistant", "content": respuesta_texto},
-            ])[-24:]
-            return respuesta_texto
-
-        return menu_fechas_cliente()
-
-    if accion == "fecha_exacta_agenda":
-        fecha, _ = interpretar_fecha(mensaje)
-        if not fecha:
-            return (
-                "No entendí la fecha. Escríbela así:\n\n"
-                "*AAAA-MM-DD*\n\n"
-                "Ejemplo: *2026-05-26*"
-            )
-        client_workflows.pop(remitente, None)
-        texto_para_ia = f"Quiero agendar para la fecha exacta {fecha}. Muéstrame horarios disponibles para esa fecha."
-        respuesta_texto, msg_usuario = responder(texto_para_ia, historial, telefono)
-        user_history[remitente] = (historial + [
-            {"role": "user", "content": mensaje},
-            {"role": "assistant", "content": respuesta_texto},
-        ])[-24:]
-        return respuesta_texto
-
-    client_workflows.pop(remitente, None)
-    return None
-
-
-def es_solicitud_redes(mensaje):
-    msg = normalizar(mensaje)
-    palabras = [
-        "redes", "instagram", "facebook", "tiktok", "ubicacion", "ubicación",
-        "direccion", "dirección", "mapa", "maps", "como llegar", "cómo llegar"
-    ]
-    return any(p in msg for p in palabras)
-
-
-def respuesta_redes():
-    lineas = ["Claro 😊 Puedes conocer más de Spa Bella aquí:\n"]
-    if SPA_INSTAGRAM:
-        lineas.append(f"📸 Instagram: {SPA_INSTAGRAM}")
-    if SPA_FACEBOOK:
-        lineas.append(f"📘 Facebook: {SPA_FACEBOOK}")
-    if SPA_TIKTOK:
-        lineas.append(f"🎵 TikTok: {SPA_TIKTOK}")
-    if SPA_MAPS:
-        lineas.append(f"📍 Ubicación: {SPA_MAPS}")
-    else:
-        lineas.append("📍 Dirección: Av. Principal 456, Col. Centro, frente al parque")
-    if SPA_WHATSAPP_LINK:
-        lineas.append(f"💬 WhatsApp: {SPA_WHATSAPP_LINK}")
-    if len(lineas) == 1:
-        lineas.append("📍 Dirección: Av. Principal 456, Col. Centro, frente al parque")
-    lineas.append("\n¿Quieres que te ayude a escoger un servicio o agendar una cita? 🌸")
-    return "\n".join(lineas)
-
-
 def menu_servicios_post_optin(reactivacion=False):
     encabezado = (
         "Perfecto, gracias 😊 Ya registré tu autorización nuevamente."
@@ -2046,6 +2186,14 @@ def responder_post_optin(telefono, remitente, mensaje, reactivacion=False):
     marcar_opt_in(telefono, mensaje)
 
     historial = user_history.get(remitente, [])
+
+    # V12.6D: en reinicio de demo, después de aceptar consentimiento siempre mostrar menú limpio.
+    # Esto evita retomar citas o conversaciones antiguas durante una presentación comercial.
+    if remitente in demo_clean_starts:
+        demo_clean_starts.discard(remitente)
+        user_history.pop(remitente, None)
+        client_workflows.pop(remitente, None)
+        return menu_servicios_post_optin(reactivacion=reactivacion)
 
     if historial:
         mensaje_reanudacion = (
@@ -2087,15 +2235,6 @@ def bot():
     # No rompe el flujo si Supabase falla, porque registrar_mensaje_log ya maneja excepciones.
     registrar_mensaje_log(telefono, "entrante", mensaje, "whatsapp")
 
-    # ── V12.6C: REINICIO DEMO GLOBAL PARA EL DUEÑO ────────────
-    # Permite mostrar el bot desde cero con el mismo WhatsApp, sin entrar primero al menú demo.
-    if DEMO_MODE and es_dueno(telefono) and es_comando_demo_global(mensaje):
-        respuesta_texto = procesar_comando_demo(mensaje, telefono, remitente)
-        resp = MessagingResponse()
-        resp.message(respuesta_texto)
-        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "demo_global")
-        return Response(str(resp), mimetype="application/xml")
-
     # ── MODO DEMO SOLO PARA EL DUEÑO ───────────────────────────
     if DEMO_MODE and es_dueno(telefono):
         if es_entrada_modo_demo(mensaje):
@@ -2122,6 +2261,7 @@ def bot():
     if es_dueno(telefono):
         if es_entrada_modo_dueno(mensaje):
             owner_sessions[remitente] = True
+            owner_workflows.pop(remitente, None)
             respuesta_texto = menu_dueno()
             resp = MessagingResponse()
             resp.message(respuesta_texto)
@@ -2131,9 +2271,10 @@ def bot():
         if owner_sessions.get(remitente):
             if es_salida_modo_dueno(mensaje):
                 owner_sessions[remitente] = False
+                owner_workflows.pop(remitente, None)
                 respuesta_texto = "Listo 😊 Volvemos al modo cliente. Escríbeme como clienta y te atiendo como Valentina 🌸"
             else:
-                respuesta_texto = procesar_comando_dueno(mensaje)
+                respuesta_texto = procesar_comando_dueno(mensaje, remitente, telefono)
 
             resp = MessagingResponse()
             resp.message(respuesta_texto)
@@ -2229,33 +2370,6 @@ def bot():
             "Por favor envíanos tu nombre y el motivo de la consulta para ayudarte mejor."
         )
         registrar_mensaje_log(telefono, "saliente", respuesta_texto, "humano")
-        resp = MessagingResponse()
-        resp.message(respuesta_texto)
-        return Response(str(resp), mimetype="application/xml")
-
-    # ── V12.6C: REDES SOCIALES / UBICACIÓN ────────────────────
-    if es_solicitud_redes(mensaje):
-        respuesta_texto = respuesta_redes()
-        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "redes")
-        resp = MessagingResponse()
-        resp.message(respuesta_texto)
-        return Response(str(resp), mimetype="application/xml")
-
-    # ── V12.6C: FECHAS GUIADAS PARA CLIENTE ───────────────────
-    if remitente not in user_history:
-        user_history[remitente] = []
-
-    respuesta_flujo_cliente = procesar_flujo_cliente_guiado(mensaje, remitente, telefono)
-    if respuesta_flujo_cliente is not None:
-        registrar_mensaje_log(telefono, "saliente", respuesta_flujo_cliente, "cliente_fecha_guiada")
-        resp = MessagingResponse()
-        resp.message(respuesta_flujo_cliente)
-        return Response(str(resp), mimetype="application/xml")
-
-    if es_solicitud_fechas_guiadas(mensaje):
-        client_workflows[remitente] = {"accion": "elegir_fecha_agenda"}
-        respuesta_texto = menu_fechas_cliente()
-        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "cliente_fecha_menu")
         resp = MessagingResponse()
         resp.message(respuesta_texto)
         return Response(str(resp), mimetype="application/xml")
