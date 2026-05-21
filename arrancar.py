@@ -1677,7 +1677,7 @@ def ejecutar_tool(tool_name, tool_input, telefono_remitente):
 
     # ── get_servicios ──────────────────────────────────────────
     if tool_name == "get_servicios":
-        categoria = tool_input.get("categoria", "").strip().lower()
+        categoria = normalizar(tool_input.get("categoria", "").strip())
         resultado = supabase.table("servicios").select("*").execute()
         servicios = resultado.data or []
 
