@@ -36,6 +36,8 @@ demo_sessions = {}
 # V12.6C/V12.6D: estados guiados para clientes y demo limpia.
 client_workflows = {}
 demo_clean_starts = set()
+# V12.6E: sesión autorizada en memoria para estabilizar demo/opt-in durante pruebas.
+authorized_sessions = set()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -115,6 +117,7 @@ def limpiar_estado_demo(telefono, remitente, limpiar_consentimiento=True, autori
         owner_sessions.pop(remitente, None)
         demo_sessions.pop(remitente, None)
         client_workflows.pop(remitente, None)
+        authorized_sessions.discard(remitente)
 
         # Marca arranque limpio: después de aceptar consentimiento no debe retomar historial viejo.
         demo_clean_starts.add(remitente)
@@ -2179,11 +2182,60 @@ def menu_servicios_post_optin(reactivacion=False):
     )
 
 
+
+def es_comando_redes(mensaje):
+    """Detecta solicitud de redes sociales, ubicación o links comerciales."""
+    msg = normalizar(mensaje)
+    return msg in [
+        "redes", "redes sociales", "instagram", "facebook", "ubicacion", "ubicación",
+        "direccion", "dirección", "links", "link", "mapa", "google maps"
+    ] or any(p in msg for p in ["redes", "instagram", "facebook", "ubicacion", "ubicación", "direccion", "dirección"])
+
+
+def respuesta_redes_sociales():
+    """Devuelve enlaces configurables por variables de entorno, sin inventar URLs."""
+    instagram = os.getenv("INSTAGRAM_URL", "").strip()
+    facebook = os.getenv("FACEBOOK_URL", "").strip()
+    maps = os.getenv("MAPS_URL", "").strip()
+    web = os.getenv("WEB_URL", "").strip()
+    whatsapp_link = os.getenv("WHATSAPP_LINK", "").strip()
+
+    lineas = ["Claro 😊 Puedes encontrar a Spa Bella aquí:"]
+    if instagram:
+        lineas.append(f"\n📸 Instagram:\n{instagram}")
+    if facebook:
+        lineas.append(f"\n📘 Facebook:\n{facebook}")
+    if web:
+        lineas.append(f"\n🌐 Web:\n{web}")
+    if maps:
+        lineas.append(f"\n📍 Ubicación:\n{maps}")
+    else:
+        lineas.append("\n📍 Dirección:\nAv. Principal 456, Col. Centro, frente al parque")
+    if whatsapp_link:
+        lineas.append(f"\n💬 WhatsApp:\n{whatsapp_link}")
+
+    if len(lineas) == 1:
+        lineas.append("\nAún no tengo enlaces configurados. Puedes agregarlos en Railway como INSTAGRAM_URL, FACEBOOK_URL y MAPS_URL.")
+
+    lineas.append("\n¿Quieres que te muestre nuestros servicios o prefieres agendar una cita? 🌸")
+    return "\n".join(lineas)
+
+
+def es_comando_demo_global(mensaje):
+    """Comandos demo que deben funcionar aunque el dueño esté en otro modo."""
+    msg = normalizar(mensaje)
+    return msg in [
+        "nuevo cliente demo", "nuevo demo", "reiniciar demo",
+        "limpiar historial demo", "limpiar consentimiento demo",
+        "cliente autorizado demo", "autorizar demo", "demo autorizado"
+    ]
+
 def responder_post_optin(telefono, remitente, mensaje, reactivacion=False):
     """Registra autorización y, si había una conversación activa, la retoma automáticamente.
     Esto evita pedir SI ACEPTO y luego obligar al cliente a escribir 'continuar'.
     """
     marcar_opt_in(telefono, mensaje)
+    authorized_sessions.add(remitente)
 
     historial = user_history.get(remitente, [])
 
@@ -2234,6 +2286,16 @@ def bot():
     # Log de mensaje entrante para auditoría y control de consumo.
     # No rompe el flujo si Supabase falla, porque registrar_mensaje_log ya maneja excepciones.
     registrar_mensaje_log(telefono, "entrante", mensaje, "whatsapp")
+
+    # ── V12.6E: COMANDOS DEMO GLOBALES PARA EL DUEÑO ──────────
+    # Deben ejecutarse antes del modo dueño y antes del consentimiento.
+    # Así "nuevo cliente demo" siempre reinicia la presentación desde cero.
+    if DEMO_MODE and es_dueno(telefono) and es_comando_demo_global(mensaje):
+        respuesta_texto = procesar_comando_demo(mensaje, telefono, remitente)
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "demo_global")
+        return Response(str(resp), mimetype="application/xml")
 
     # ── MODO DEMO SOLO PARA EL DUEÑO ───────────────────────────
     if DEMO_MODE and es_dueno(telefono):
@@ -2308,9 +2370,14 @@ def bot():
     telefono_limpio = limpiar_telefono_cliente(telefono)
     cliente_actual = buscar_cliente(telefono=telefono_limpio)
 
-    if not cliente_actual or (
+    if cliente_actual and cliente_actual.get("whatsapp_opt_in") and not cliente_actual.get("no_contactar"):
+        authorized_sessions.add(remitente)
+
+    sesion_autorizada = remitente in authorized_sessions
+
+    if (not sesion_autorizada) and (not cliente_actual or (
         not cliente_actual.get("whatsapp_opt_in") and not cliente_actual.get("no_contactar")
-    ):
+    )):
         msg_normalizado = normalizar(mensaje)
 
         if msg_normalizado in ["1", "si", "si acepto", "sí acepto", "acepto", "autorizo", "si autorizo", "sí autorizo"]:
@@ -2370,6 +2437,30 @@ def bot():
             "Por favor envíanos tu nombre y el motivo de la consulta para ayudarte mejor."
         )
         registrar_mensaje_log(telefono, "saliente", respuesta_texto, "humano")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+
+    if es_comando_redes(mensaje):
+        respuesta_texto = respuesta_redes_sociales()
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "redes")
+        resp = MessagingResponse()
+        resp.message(respuesta_texto)
+        return Response(str(resp), mimetype="application/xml")
+
+    if normalizar(mensaje) in ["quiero agendar", "agendar", "quiero una cita", "cita", "reservar"]:
+        respuesta_texto = (
+            "Claro 😊 ¿Qué servicio te gustaría agendar?\n\n"
+            "1️⃣ Masajes\n"
+            "2️⃣ Faciales\n"
+            "3️⃣ Depilación\n"
+            "4️⃣ Uñas\n"
+            "5️⃣ Pestañas\n"
+            "6️⃣ Cabello\n"
+            "7️⃣ Tratamientos corporales\n\n"
+            "Responde con el número o dime el servicio que buscas 🌸"
+        )
+        registrar_mensaje_log(telefono, "saliente", respuesta_texto, "agendar_guiado")
         resp = MessagingResponse()
         resp.message(respuesta_texto)
         return Response(str(resp), mimetype="application/xml")
